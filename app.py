@@ -3196,8 +3196,7 @@ def root():
         }
     )
 
-
-if __name__ == '__main__':
-    # Development mode
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+# Cloud Run で直接実行されることはあまり無いが、ローカル動作用
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
