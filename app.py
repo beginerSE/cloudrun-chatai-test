@@ -2522,694 +2522,694 @@ def test_connection():
 # # Project Management API
 # # ============================================
 
-# @app.route('/api/projects', methods=['GET'])
-# @login_required
-# def get_projects():
-#     """Get all projects for current user"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
-#                    is_active, created_at, updated_at
-#             FROM projects
-#             WHERE user_id = %s
-#             ORDER BY created_at DESC
-#         ''', (current_user.id,))
-#         projects = cur.fetchall()
-#         cur.close()
-#         conn.close()
+@app.route('/api/projects', methods=['GET'])
+@login_required
+def get_projects():
+    """Get all projects for current user"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
+                   is_active, created_at, updated_at
+            FROM projects
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+        ''', (current_user.id,))
+        projects = cur.fetchall()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "projects": [dict(p) for p in projects]
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "projects": [dict(p) for p in projects]
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/projects', methods=['POST'])
-# @login_required
-# def create_project():
-#     """Create a new project"""
-#     try:
-#         data = request.json
-#         name = data.get('name', '').strip()
-#         description = data.get('description', '').strip()
+@app.route('/api/projects', methods=['POST'])
+@login_required
+def create_project():
+    """Create a new project"""
+    try:
+        data = request.json
+        name = data.get('name', '').strip()
+        description = data.get('description', '').strip()
         
-#         if not name:
-#             return jsonify({"error": "Project name is required"}), 400
+        if not name:
+            return jsonify({"error": "Project name is required"}), 400
         
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Create project
-#         cur.execute('''
-#             INSERT INTO projects (user_id, name, description)
-#             VALUES (%s, %s, %s)
-#             RETURNING id, name, description, is_active, created_at, updated_at
-#         ''', (current_user.id, name, description))
+        # Create project
+        cur.execute('''
+            INSERT INTO projects (user_id, name, description)
+            VALUES (%s, %s, %s)
+            RETURNING id, name, description, is_active, created_at, updated_at
+        ''', (current_user.id, name, description))
         
-#         project = cur.fetchone()
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        project = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "project": dict(project),
-#             "message": "Project created successfully"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "project": dict(project),
+            "message": "Project created successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/projects/<int:project_id>', methods=['GET'])
-# @login_required
-# def get_project(project_id):
-#     """Get project details"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
-#                    is_active, created_at, updated_at,
-#                    openai_api_key IS NOT NULL as has_api_key,
-#                    service_account_json IS NOT NULL as has_service_account
-#             FROM projects
-#             WHERE id = %s AND user_id = %s
-#         ''', (project_id, current_user.id))
+@app.route('/api/projects/<int:project_id>', methods=['GET'])
+@login_required
+def get_project(project_id):
+    """Get project details"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
+                   is_active, created_at, updated_at,
+                   openai_api_key IS NOT NULL as has_api_key,
+                   service_account_json IS NOT NULL as has_service_account
+            FROM projects
+            WHERE id = %s AND user_id = %s
+        ''', (project_id, current_user.id))
         
-#         project = cur.fetchone()
-#         cur.close()
-#         conn.close()
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if not project:
-#             return jsonify({"error": "Project not found"}), 404
+        if not project:
+            return jsonify({"error": "Project not found"}), 404
         
-#         return jsonify({
-#             "success": True,
-#             "project": dict(project)
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "project": dict(project)
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/projects/<int:project_id>', methods=['PUT'])
-# @login_required
-# def update_project(project_id):
-#     """Update project"""
-#     try:
-#         data = request.json
+@app.route('/api/projects/<int:project_id>', methods=['PUT'])
+@login_required
+def update_project(project_id):
+    """Update project"""
+    try:
+        data = request.json
         
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Check if project exists and belongs to user
-#         cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', 
-#                    (project_id, current_user.id))
-#         if not cur.fetchone():
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Project not found"}), 404
+        # Check if project exists and belongs to user
+        cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', 
+                   (project_id, current_user.id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Project not found"}), 404
         
-#         # Build update query dynamically
-#         update_fields = []
-#         params = []
+        # Build update query dynamically
+        update_fields = []
+        params = []
         
-#         if 'name' in data:
-#             update_fields.append('name = %s')
-#             params.append(data['name'])
-#         if 'description' in data:
-#             update_fields.append('description = %s')
-#             params.append(data['description'])
-#         if 'openai_api_key' in data:
-#             update_fields.append('openai_api_key = %s')
-#             params.append(data['openai_api_key'])
-#         if 'bigquery_project_id' in data:
-#             update_fields.append('bigquery_project_id = %s')
-#             params.append(data['bigquery_project_id'])
-#         if 'bigquery_dataset_id' in data:
-#             update_fields.append('bigquery_dataset_id = %s')
-#             params.append(data['bigquery_dataset_id'])
-#         if 'service_account_json' in data:
-#             update_fields.append('service_account_json = %s')
-#             params.append(data['service_account_json'])
+        if 'name' in data:
+            update_fields.append('name = %s')
+            params.append(data['name'])
+        if 'description' in data:
+            update_fields.append('description = %s')
+            params.append(data['description'])
+        if 'openai_api_key' in data:
+            update_fields.append('openai_api_key = %s')
+            params.append(data['openai_api_key'])
+        if 'bigquery_project_id' in data:
+            update_fields.append('bigquery_project_id = %s')
+            params.append(data['bigquery_project_id'])
+        if 'bigquery_dataset_id' in data:
+            update_fields.append('bigquery_dataset_id = %s')
+            params.append(data['bigquery_dataset_id'])
+        if 'service_account_json' in data:
+            update_fields.append('service_account_json = %s')
+            params.append(data['service_account_json'])
         
-#         if not update_fields:
-#             return jsonify({"error": "No fields to update"}), 400
+        if not update_fields:
+            return jsonify({"error": "No fields to update"}), 400
         
-#         update_fields.append('updated_at = CURRENT_TIMESTAMP')
-#         params.extend([project_id, current_user.id])
+        update_fields.append('updated_at = CURRENT_TIMESTAMP')
+        params.extend([project_id, current_user.id])
         
-#         query = f'''
-#             UPDATE projects
-#             SET {', '.join(update_fields)}
-#             WHERE id = %s AND user_id = %s
-#             RETURNING id, name, description, bigquery_project_id, bigquery_dataset_id,
-#                       is_active, created_at, updated_at
-#         '''
+        query = f'''
+            UPDATE projects
+            SET {', '.join(update_fields)}
+            WHERE id = %s AND user_id = %s
+            RETURNING id, name, description, bigquery_project_id, bigquery_dataset_id,
+                      is_active, created_at, updated_at
+        '''
         
-#         cur.execute(query, params)
-#         project = cur.fetchone()
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        cur.execute(query, params)
+        project = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "project": dict(project),
-#             "message": "Project updated successfully"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "project": dict(project),
+            "message": "Project updated successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/projects/<int:project_id>', methods=['DELETE'])
-# @login_required
-# def delete_project(project_id):
-#     """Delete project"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor()
+@app.route('/api/projects/<int:project_id>', methods=['DELETE'])
+@login_required
+def delete_project(project_id):
+    """Delete project"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
         
-#         # Check if project exists and belongs to user
-#         cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', 
-#                    (project_id, current_user.id))
-#         if not cur.fetchone():
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Project not found"}), 404
+        # Check if project exists and belongs to user
+        cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', 
+                   (project_id, current_user.id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Project not found"}), 404
         
-#         # Delete project (cascade will delete chat history)
-#         cur.execute('DELETE FROM projects WHERE id = %s AND user_id = %s', 
-#                    (project_id, current_user.id))
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        # Delete project (cascade will delete chat history)
+        cur.execute('DELETE FROM projects WHERE id = %s AND user_id = %s', 
+                   (project_id, current_user.id))
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "message": "Project deleted successfully"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "message": "Project deleted successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/projects/<int:project_id>/activate', methods=['POST'])
-# @login_required
-# def activate_project(project_id):
-#     """Set project as active"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+@app.route('/api/projects/<int:project_id>/activate', methods=['POST'])
+@login_required
+def activate_project(project_id):
+    """Set project as active"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Check if project exists and belongs to user
-#         cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', 
-#                    (project_id, current_user.id))
-#         if not cur.fetchone():
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Project not found"}), 404
+        # Check if project exists and belongs to user
+        cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', 
+                   (project_id, current_user.id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Project not found"}), 404
         
-#         # Deactivate all projects for this user
-#         cur.execute('UPDATE projects SET is_active = false WHERE user_id = %s', 
-#                    (current_user.id,))
+        # Deactivate all projects for this user
+        cur.execute('UPDATE projects SET is_active = false WHERE user_id = %s', 
+                   (current_user.id,))
         
-#         # Activate selected project
-#         cur.execute('''
-#             UPDATE projects SET is_active = true 
-#             WHERE id = %s AND user_id = %s
-#             RETURNING id, name, description, bigquery_project_id, bigquery_dataset_id,
-#                       is_active, created_at, updated_at
-#         ''', (project_id, current_user.id))
+        # Activate selected project
+        cur.execute('''
+            UPDATE projects SET is_active = true 
+            WHERE id = %s AND user_id = %s
+            RETURNING id, name, description, bigquery_project_id, bigquery_dataset_id,
+                      is_active, created_at, updated_at
+        ''', (project_id, current_user.id))
         
-#         project = cur.fetchone()
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        project = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "project": dict(project),
-#             "message": f"Project '{project['name']}' is now active"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "project": dict(project),
+            "message": f"Project '{project['name']}' is now active"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/projects/active', methods=['GET'])
-# @login_required
-# def get_active_project():
-#     """Get currently active project"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
-#                    openai_api_key, service_account_json, is_active, created_at, updated_at
-#             FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
+@app.route('/api/projects/active', methods=['GET'])
+@login_required
+def get_active_project():
+    """Get currently active project"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
+                   openai_api_key, service_account_json, is_active, created_at, updated_at
+            FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
         
-#         project = cur.fetchone()
-#         cur.close()
-#         conn.close()
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if not project:
-#             return jsonify({
-#                 "success": True,
-#                 "project": None
-#             })
+        if not project:
+            return jsonify({
+                "success": True,
+                "project": None
+            })
         
-#         return jsonify({
-#             "success": True,
-#             "project": dict(project)
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "project": dict(project)
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 # # ============================================
 # # Chat Session Management API
 # # ============================================
 
-# @app.route('/api/chat-sessions', methods=['POST'])
-# @login_required
-# def create_chat_session():
-#     """Create a new chat session for active project"""
-#     try:
-#         # Get active project
-#         config = get_active_project_config(current_user.id)
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+@app.route('/api/chat-sessions', methods=['POST'])
+@login_required
+def create_chat_session():
+    """Create a new chat session for active project"""
+    try:
+        # Get active project
+        config = get_active_project_config(current_user.id)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         cur.execute('''
-#             SELECT id FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
+        cur.execute('''
+            SELECT id FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
         
-#         if not project:
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "No active project"}), 404
+        if not project:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "No active project"}), 404
         
-#         # Create new session
-#         cur.execute('''
-#             INSERT INTO chat_sessions (project_id, title)
-#             VALUES (%s, %s)
-#             RETURNING id, project_id, title, created_at, updated_at
-#         ''', (project['id'], 'New Chat'))
+        # Create new session
+        cur.execute('''
+            INSERT INTO chat_sessions (project_id, title)
+            VALUES (%s, %s)
+            RETURNING id, project_id, title, created_at, updated_at
+        ''', (project['id'], 'New Chat'))
         
-#         session = cur.fetchone()
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        session = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "session": dict(session)
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "session": dict(session)
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/chat-sessions', methods=['GET'])
-# @login_required
-# def get_chat_sessions():
-#     """Get all chat sessions for active project"""
-#     try:
-#         # Get active project
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+@app.route('/api/chat-sessions', methods=['GET'])
+@login_required
+def get_chat_sessions():
+    """Get all chat sessions for active project"""
+    try:
+        # Get active project
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         cur.execute('''
-#             SELECT id FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
+        cur.execute('''
+            SELECT id FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
         
-#         if not project:
-#             cur.close()
-#             conn.close()
-#             return jsonify({
-#                 "success": True,
-#                 "sessions": []
-#             })
+        if not project:
+            cur.close()
+            conn.close()
+            return jsonify({
+                "success": True,
+                "sessions": []
+            })
         
-#         # Get sessions with message count
-#         cur.execute('''
-#             SELECT 
-#                 s.id, 
-#                 s.project_id, 
-#                 s.title, 
-#                 s.created_at, 
-#                 s.updated_at,
-#                 COUNT(h.id) as message_count
-#             FROM chat_sessions s
-#             LEFT JOIN chat_history h ON h.session_id = s.id
-#             WHERE s.project_id = %s
-#             GROUP BY s.id, s.project_id, s.title, s.created_at, s.updated_at
-#             ORDER BY s.updated_at DESC
-#         ''', (project['id'],))
+        # Get sessions with message count
+        cur.execute('''
+            SELECT 
+                s.id, 
+                s.project_id, 
+                s.title, 
+                s.created_at, 
+                s.updated_at,
+                COUNT(h.id) as message_count
+            FROM chat_sessions s
+            LEFT JOIN chat_history h ON h.session_id = s.id
+            WHERE s.project_id = %s
+            GROUP BY s.id, s.project_id, s.title, s.created_at, s.updated_at
+            ORDER BY s.updated_at DESC
+        ''', (project['id'],))
         
-#         sessions = cur.fetchall()
-#         cur.close()
-#         conn.close()
+        sessions = cur.fetchall()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "sessions": [dict(s) for s in sessions]
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "sessions": [dict(s) for s in sessions]
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/chat-sessions/<int:session_id>/messages', methods=['GET'])
-# @login_required
-# def get_session_messages(session_id):
-#     """Get all messages for a specific chat session"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+@app.route('/api/chat-sessions/<int:session_id>/messages', methods=['GET'])
+@login_required
+def get_session_messages(session_id):
+    """Get all messages for a specific chat session"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Verify session belongs to user's active project
-#         cur.execute('''
-#             SELECT s.id 
-#             FROM chat_sessions s
-#             JOIN projects p ON p.id = s.project_id
-#             WHERE s.id = %s AND p.user_id = %s
-#             LIMIT 1
-#         ''', (session_id, current_user.id))
+        # Verify session belongs to user's active project
+        cur.execute('''
+            SELECT s.id 
+            FROM chat_sessions s
+            JOIN projects p ON p.id = s.project_id
+            WHERE s.id = %s AND p.user_id = %s
+            LIMIT 1
+        ''', (session_id, current_user.id))
         
-#         if not cur.fetchone():
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Session not found"}), 404
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Session not found"}), 404
         
-#         # Get all messages for this session
-#         cur.execute('''
-#             SELECT id, user_message, ai_response, query_result, created_at
-#             FROM chat_history
-#             WHERE session_id = %s
-#             ORDER BY created_at ASC
-#         ''', (session_id,))
+        # Get all messages for this session
+        cur.execute('''
+            SELECT id, user_message, ai_response, query_result, created_at
+            FROM chat_history
+            WHERE session_id = %s
+            ORDER BY created_at ASC
+        ''', (session_id,))
         
-#         messages = cur.fetchall()
-#         cur.close()
-#         conn.close()
+        messages = cur.fetchall()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "messages": [dict(m) for m in messages]
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "messages": [dict(m) for m in messages]
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/chat-sessions/<int:session_id>/title', methods=['PUT'])
-# @login_required
-# def update_session_title(session_id):
-#     """Update chat session title"""
-#     try:
-#         data = request.json
-#         new_title = data.get('title', '').strip()
+@app.route('/api/chat-sessions/<int:session_id>/title', methods=['PUT'])
+@login_required
+def update_session_title(session_id):
+    """Update chat session title"""
+    try:
+        data = request.json
+        new_title = data.get('title', '').strip()
         
-#         if not new_title:
-#             return jsonify({"error": "Title is required"}), 400
+        if not new_title:
+            return jsonify({"error": "Title is required"}), 400
         
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Verify session belongs to user's active project
-#         cur.execute('''
-#             SELECT s.id 
-#             FROM chat_sessions s
-#             JOIN projects p ON p.id = s.project_id
-#             WHERE s.id = %s AND p.user_id = %s
-#             LIMIT 1
-#         ''', (session_id, current_user.id))
+        # Verify session belongs to user's active project
+        cur.execute('''
+            SELECT s.id 
+            FROM chat_sessions s
+            JOIN projects p ON p.id = s.project_id
+            WHERE s.id = %s AND p.user_id = %s
+            LIMIT 1
+        ''', (session_id, current_user.id))
         
-#         if not cur.fetchone():
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Session not found"}), 404
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Session not found"}), 404
         
-#         # Update title
-#         cur.execute('''
-#             UPDATE chat_sessions
-#             SET title = %s, updated_at = CURRENT_TIMESTAMP
-#             WHERE id = %s
-#             RETURNING id, project_id, title, created_at, updated_at
-#         ''', (new_title, session_id))
+        # Update title
+        cur.execute('''
+            UPDATE chat_sessions
+            SET title = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING id, project_id, title, created_at, updated_at
+        ''', (new_title, session_id))
         
-#         session = cur.fetchone()
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        session = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "session": dict(session)
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "session": dict(session)
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/chat-sessions/<int:session_id>', methods=['DELETE'])
-# @login_required
-# def delete_session(session_id):
-#     """Delete a chat session"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+@app.route('/api/chat-sessions/<int:session_id>', methods=['DELETE'])
+@login_required
+def delete_session(session_id):
+    """Delete a chat session"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Verify session belongs to user
-#         cur.execute('''
-#             SELECT s.id 
-#             FROM chat_sessions s
-#             JOIN projects p ON p.id = s.project_id
-#             WHERE s.id = %s AND p.user_id = %s
-#             LIMIT 1
-#         ''', (session_id, current_user.id))
+        # Verify session belongs to user
+        cur.execute('''
+            SELECT s.id 
+            FROM chat_sessions s
+            JOIN projects p ON p.id = s.project_id
+            WHERE s.id = %s AND p.user_id = %s
+            LIMIT 1
+        ''', (session_id, current_user.id))
         
-#         if not cur.fetchone():
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Session not found"}), 404
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Session not found"}), 404
         
-#         # Delete session (cascade will delete related chat_history)
-#         cur.execute('DELETE FROM chat_sessions WHERE id = %s', (session_id,))
+        # Delete session (cascade will delete related chat_history)
+        cur.execute('DELETE FROM chat_sessions WHERE id = %s', (session_id,))
         
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "message": "Session deleted successfully"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "message": "Session deleted successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 # # ============================================
 # # Account Settings API
 # # ============================================
 
-# @app.route('/api/account/password', methods=['PUT'])
-# @login_required
-# def change_password():
-#     """Change user password"""
-#     try:
-#         data = request.json
-#         current_password = data.get('current_password', '')
-#         new_password = data.get('new_password', '')
+@app.route('/api/account/password', methods=['PUT'])
+@login_required
+def change_password():
+    """Change user password"""
+    try:
+        data = request.json
+        current_password = data.get('current_password', '')
+        new_password = data.get('new_password', '')
         
-#         if not current_password or not new_password:
-#             return jsonify({"error": "Current password and new password are required"}), 400
+        if not current_password or not new_password:
+            return jsonify({"error": "Current password and new password are required"}), 400
         
-#         if len(new_password) < 6:
-#             return jsonify({"error": "New password must be at least 6 characters"}), 400
+        if len(new_password) < 6:
+            return jsonify({"error": "New password must be at least 6 characters"}), 400
         
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Get current password hash
-#         cur.execute('SELECT password_hash FROM users WHERE id = %s', (current_user.id,))
-#         user = cur.fetchone()
+        # Get current password hash
+        cur.execute('SELECT password_hash FROM users WHERE id = %s', (current_user.id,))
+        user = cur.fetchone()
         
-#         if not user:
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "User not found"}), 404
+        if not user:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
         
-#         # Verify current password
-#         if not bcrypt.checkpw(current_password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Current password is incorrect"}), 401
+        # Verify current password
+        if not bcrypt.checkpw(current_password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Current password is incorrect"}), 401
         
-#         # Hash new password
-#         new_password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        # Hash new password
+        new_password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
-#         # Update password
-#         cur.execute('''
-#             UPDATE users
-#             SET password_hash = %s
-#             WHERE id = %s
-#         ''', (new_password_hash, current_user.id))
+        # Update password
+        cur.execute('''
+            UPDATE users
+            SET password_hash = %s
+            WHERE id = %s
+        ''', (new_password_hash, current_user.id))
         
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "message": "Password changed successfully"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "message": "Password changed successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/account/email', methods=['PUT'])
-# @login_required
-# def update_email():
-#     """Update user email"""
-#     try:
-#         data = request.json
-#         email = data.get('email', '').strip()
+@app.route('/api/account/email', methods=['PUT'])
+@login_required
+def update_email():
+    """Update user email"""
+    try:
+        data = request.json
+        email = data.get('email', '').strip()
         
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Update email
-#         cur.execute('''
-#             UPDATE users
-#             SET email = %s
-#             WHERE id = %s
-#         ''', (email if email else None, current_user.id))
+        # Update email
+        cur.execute('''
+            UPDATE users
+            SET email = %s
+            WHERE id = %s
+        ''', (email if email else None, current_user.id))
         
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "message": "Email updated successfully"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "message": "Email updated successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/account', methods=['DELETE'])
-# @login_required
-# def delete_account():
-#     """Delete user account"""
-#     try:
-#         data = request.json
-#         password = data.get('password', '')
+@app.route('/api/account', methods=['DELETE'])
+@login_required
+def delete_account():
+    """Delete user account"""
+    try:
+        data = request.json
+        password = data.get('password', '')
         
-#         if not password:
-#             return jsonify({"error": "Password is required"}), 400
+        if not password:
+            return jsonify({"error": "Password is required"}), 400
         
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         # Get current password hash
-#         cur.execute('SELECT password_hash FROM users WHERE id = %s', (current_user.id,))
-#         user = cur.fetchone()
+        # Get current password hash
+        cur.execute('SELECT password_hash FROM users WHERE id = %s', (current_user.id,))
+        user = cur.fetchone()
         
-#         if not user:
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "User not found"}), 404
+        if not user:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "User not found"}), 404
         
-#         # Verify password
-#         if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-#             cur.close()
-#             conn.close()
-#             return jsonify({"error": "Password is incorrect"}), 401
+        # Verify password
+        if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Password is incorrect"}), 401
         
-#         # Delete user (cascades to projects, chat_sessions, chat_history)
-#         cur.execute('DELETE FROM users WHERE id = %s', (current_user.id,))
+        # Delete user (cascades to projects, chat_sessions, chat_history)
+        cur.execute('DELETE FROM users WHERE id = %s', (current_user.id,))
         
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         # Logout user
-#         logout_user()
+        # Logout user
+        logout_user()
         
-#         return jsonify({
-#             "success": True,
-#             "message": "Account deleted successfully"
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "message": "Account deleted successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# Security headers for production
-# @app.after_request
-# def set_security_headers(response):
-#     """Set security headers for all responses"""
-#     # Only set security headers in production
-#     if os.getenv('FLASK_ENV') == 'production':
-#         response.headers['X-Content-Type-Options'] = 'nosniff'
-#         response.headers['X-Frame-Options'] = 'DENY'
-#         response.headers['X-XSS-Protection'] = '1; mode=block'
-#         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-#         response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self';"
-#     return response
+Security headers for production
+@app.after_request
+def set_security_headers(response):
+    """Set security headers for all responses"""
+    # Only set security headers in production
+    if os.getenv('FLASK_ENV') == 'production':
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self';"
+    return response
 
 
 @app.route("/test")
