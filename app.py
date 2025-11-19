@@ -1849,68 +1849,68 @@ def login():
     
     return render_template('login.html')
 
-# @app.route('/signup', methods=['GET', 'POST'])
-# def signup():
-#     """Handle user registration"""
-#     if current_user.is_authenticated:
-#         return redirect(url_for('index'))
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    """Handle user registration"""
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
     
-#     if request.method == 'POST':
-#         username = request.form.get('username')
-#         password = request.form.get('password')
-#         email = request.form.get('email', '')
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        email = request.form.get('email', '')
         
-#         # Validation
-#         if not username or not password:
-#             flash('ユーザー名とパスワードは必須です。', 'error')
-#             return render_template('signup.html')
+        # Validation
+        if not username or not password:
+            flash('ユーザー名とパスワードは必須です。', 'error')
+            return render_template('signup.html')
         
-#         if len(password) < 6:
-#             flash('パスワードは6文字以上にしてください。', 'error')
-#             return render_template('signup.html')
+        if len(password) < 6:
+            flash('パスワードは6文字以上にしてください。', 'error')
+            return render_template('signup.html')
         
-#         # Check if username exists
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('SELECT id FROM users WHERE username = %s', (username,))
-#         existing_user = cur.fetchone()
+        # Check if username exists
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('SELECT id FROM users WHERE username = %s', (username,))
+        existing_user = cur.fetchone()
         
-#         if existing_user:
-#             flash('このユーザー名は既に使用されています。', 'error')
-#             cur.close()
-#             conn.close()
-#             return render_template('signup.html')
+        if existing_user:
+            flash('このユーザー名は既に使用されています。', 'error')
+            cur.close()
+            conn.close()
+            return render_template('signup.html')
         
-#         # Hash password
-#         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        # Hash password
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
-#         # Insert new user
-#         cur.execute(
-#             'INSERT INTO users (username, password_hash, email) VALUES (%s, %s, %s) RETURNING id',
-#             (username, password_hash, email)
-#         )
-#         user_id = cur.fetchone()['id']
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        # Insert new user
+        cur.execute(
+            'INSERT INTO users (username, password_hash, email) VALUES (%s, %s, %s) RETURNING id',
+            (username, password_hash, email)
+        )
+        user_id = cur.fetchone()['id']
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         flash('アカウントが作成されました。ログインしてください。', 'success')
-#         return redirect(url_for('login'))
+        flash('アカウントが作成されました。ログインしてください。', 'success')
+        return redirect(url_for('login'))
     
-#     return render_template('signup.html')
+    return render_template('signup.html')
 
-# @app.route('/logout')
-# @login_required
-# def logout():
-#     """Handle logout"""
-#     logout_user()
-#     return redirect(url_for('login'))
+@app.route('/logout')
+@login_required
+def logout():
+    """Handle logout"""
+    logout_user()
+    return redirect(url_for('login'))
 
-# @app.route('/account')
-# @login_required
-# def account_settings():
-#     """Render account settings page"""
-#     return render_template('account_settings.html')
+@app.route('/account')
+@login_required
+def account_settings():
+    """Render account settings page"""
+    return render_template('account_settings.html')
 
 # @app.route('/agent-chat')
 # @login_required
