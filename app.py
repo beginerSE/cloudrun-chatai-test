@@ -1937,586 +1937,586 @@ def account_settings():
     """Render account settings page"""
     return render_template('account_settings.html')
 
-# @app.route('/agent-chat')
-# @login_required
-# def agent_chat_redirect():
-#     """Redirect to latest chat session or create new one"""
-#     try:
-#         # Get active project
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+@app.route('/agent-chat')
+@login_required
+def agent_chat_redirect():
+    """Redirect to latest chat session or create new one"""
+    try:
+        # Get active project
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         cur.execute('''
-#             SELECT id FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
+        cur.execute('''
+            SELECT id FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
         
-#         if not project:
-#             # No active project - show page with warning
-#             cur.close()
-#             conn.close()
-#             return render_template('agent_chat.html', session_id=None)
+        if not project:
+            # No active project - show page with warning
+            cur.close()
+            conn.close()
+            return render_template('agent_chat.html', session_id=None)
         
-#         # Get latest session for this project
-#         cur.execute('''
-#             SELECT id FROM chat_sessions
-#             WHERE project_id = %s
-#             ORDER BY updated_at DESC
-#             LIMIT 1
-#         ''', (project['id'],))
-#         latest_session = cur.fetchone()
+        # Get latest session for this project
+        cur.execute('''
+            SELECT id FROM chat_sessions
+            WHERE project_id = %s
+            ORDER BY updated_at DESC
+            LIMIT 1
+        ''', (project['id'],))
+        latest_session = cur.fetchone()
         
-#         if latest_session:
-#             # Redirect to latest session
-#             session_id = latest_session['id']
-#             cur.close()
-#             conn.close()
-#             return redirect(url_for('agent_chat', session_id=session_id))
+        if latest_session:
+            # Redirect to latest session
+            session_id = latest_session['id']
+            cur.close()
+            conn.close()
+            return redirect(url_for('agent_chat', session_id=session_id))
         
-#         # No existing sessions - create new one
-#         cur.execute('''
-#             INSERT INTO chat_sessions (project_id, title)
-#             VALUES (%s, %s)
-#             RETURNING id
-#         ''', (project['id'], 'New Chat'))
+        # No existing sessions - create new one
+        cur.execute('''
+            INSERT INTO chat_sessions (project_id, title)
+            VALUES (%s, %s)
+            RETURNING id
+        ''', (project['id'], 'New Chat'))
         
-#         session = cur.fetchone()
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        session = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         # Redirect to session URL
-#         return redirect(url_for('agent_chat', session_id=session['id']))
-#     except Exception as e:
-#         print(f"Error handling chat redirect: {e}")
-#         return render_template('agent_chat.html', session_id=None)
+        # Redirect to session URL
+        return redirect(url_for('agent_chat', session_id=session['id']))
+    except Exception as e:
+        print(f"Error handling chat redirect: {e}")
+        return render_template('agent_chat.html', session_id=None)
 
-# @app.route('/agent-chat/<int:session_id>')
-# @login_required
-# def agent_chat(session_id):
-#     """Render agent chat page for specific session"""
-#     try:
-#         # Verify session belongs to user
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
+@app.route('/agent-chat/<int:session_id>')
+@login_required
+def agent_chat(session_id):
+    """Render agent chat page for specific session"""
+    try:
+        # Verify session belongs to user
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         
-#         cur.execute('''
-#             SELECT s.id 
-#             FROM chat_sessions s
-#             JOIN projects p ON p.id = s.project_id
-#             WHERE s.id = %s AND p.user_id = %s
-#             LIMIT 1
-#         ''', (session_id, current_user.id))
+        cur.execute('''
+            SELECT s.id 
+            FROM chat_sessions s
+            JOIN projects p ON p.id = s.project_id
+            WHERE s.id = %s AND p.user_id = %s
+            LIMIT 1
+        ''', (session_id, current_user.id))
         
-#         session = cur.fetchone()
-#         cur.close()
-#         conn.close()
+        session = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if not session:
-#             # Session not found or doesn't belong to user
-#             flash('セッションが見つかりませんでした。', 'error')
-#             return redirect(url_for('agent_chat_redirect'))
+        if not session:
+            # Session not found or doesn't belong to user
+            flash('セッションが見つかりませんでした。', 'error')
+            return redirect(url_for('agent_chat_redirect'))
         
-#         return render_template('agent_chat.html', session_id=session_id)
-#     except Exception as e:
-#         print(f"Error loading session: {e}")
-#         return redirect(url_for('agent_chat_redirect'))
+        return render_template('agent_chat.html', session_id=session_id)
+    except Exception as e:
+        print(f"Error loading session: {e}")
+        return redirect(url_for('agent_chat_redirect'))
 
-# @app.route('/api/chat', methods=['POST'])
-# @login_required
-# def chat():
-#     """Start chat task and return task_id for polling"""
-#     try:
-#         data = request.json
-#         question = data.get('question', '')
-#         history = data.get('history', [])
-#         session_id = data.get('session_id')
+@app.route('/api/chat', methods=['POST'])
+@login_required
+def chat():
+    """Start chat task and return task_id for polling"""
+    try:
+        data = request.json
+        question = data.get('question', '')
+        history = data.get('history', [])
+        session_id = data.get('session_id')
         
-#         if not question:
-#             return jsonify({"error": "Question is required"}), 400
+        if not question:
+            return jsonify({"error": "Question is required"}), 400
         
-#         # Get active project configuration
-#         config = get_active_project_config(current_user.id)
+        # Get active project configuration
+        config = get_active_project_config(current_user.id)
         
-#         if not config['api_key']:
-#             return jsonify({"error": "OpenAI API key not configured"}), 500
+        if not config['api_key']:
+            return jsonify({"error": "OpenAI API key not configured"}), 500
         
-#         if not config['project_id']:
-#             return jsonify({"error": "BigQuery project not configured"}), 500
+        if not config['project_id']:
+            return jsonify({"error": "BigQuery project not configured"}), 500
         
-#         # Get active project ID
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('SELECT id FROM projects WHERE user_id = %s AND is_active = true LIMIT 1', (current_user.id,))
-#         active_project = cur.fetchone()
-#         active_project_id = active_project['id'] if active_project else None
+        # Get active project ID
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('SELECT id FROM projects WHERE user_id = %s AND is_active = true LIMIT 1', (current_user.id,))
+        active_project = cur.fetchone()
+        active_project_id = active_project['id'] if active_project else None
         
-#         # Create or verify session
-#         if session_id:
-#             cur.execute('''
-#                 SELECT id FROM chat_sessions 
-#                 WHERE id = %s AND project_id = %s
-#             ''', (session_id, active_project_id))
-#             if not cur.fetchone():
-#                 session_id = None
+        # Create or verify session
+        if session_id:
+            cur.execute('''
+                SELECT id FROM chat_sessions 
+                WHERE id = %s AND project_id = %s
+            ''', (session_id, active_project_id))
+            if not cur.fetchone():
+                session_id = None
         
-#         if not session_id and active_project_id:
-#             cur.execute('''
-#                 INSERT INTO chat_sessions (project_id, title)
-#                 VALUES (%s, %s)
-#                 RETURNING id
-#             ''', (active_project_id, 'New Chat'))
-#             new_session = cur.fetchone()
-#             session_id = new_session['id']
-#             conn.commit()
+        if not session_id and active_project_id:
+            cur.execute('''
+                INSERT INTO chat_sessions (project_id, title)
+                VALUES (%s, %s)
+                RETURNING id
+            ''', (active_project_id, 'New Chat'))
+            new_session = cur.fetchone()
+            session_id = new_session['id']
+            conn.commit()
         
-#         cur.close()
-#         conn.close()
+        cur.close()
+        conn.close()
         
-#         # Generate task ID
-#         import uuid
-#         task_id = str(uuid.uuid4())
+        # Generate task ID
+        import uuid
+        task_id = str(uuid.uuid4())
         
-#         # Initialize task state
-#         with task_lock:
-#             chat_tasks[task_id] = {
-#                 'status': 'running',
-#                 'steps': ['🔧 処理を開始しました...'],
-#                 'result': None,
-#                 'error': None
-#             }
+        # Initialize task state
+        with task_lock:
+            chat_tasks[task_id] = {
+                'status': 'running',
+                'steps': ['🔧 処理を開始しました...'],
+                'result': None,
+                'error': None
+            }
         
-#         # Run task in background thread
-#         def run_task():
-#             try:
-#                 result = asyncio.run(run_agent_with_steps(
-#                     task_id, question, history,
-#                     api_key=config['api_key'],
-#                     project_id=config['project_id'],
-#                     dataset_id=config['dataset_id'],
-#                     service_account_json=config['service_account_json']
-#                 ))
+        # Run task in background thread
+        def run_task():
+            try:
+                result = asyncio.run(run_agent_with_steps(
+                    task_id, question, history,
+                    api_key=config['api_key'],
+                    project_id=config['project_id'],
+                    dataset_id=config['dataset_id'],
+                    service_account_json=config['service_account_json']
+                ))
                 
-#                 # Save to database
-#                 if active_project_id and session_id:
-#                     conn = get_db_connection()
-#                     cur = conn.cursor(cursor_factory=RealDictCursor)
-#                     cur.execute('''
-#                         INSERT INTO chat_history (project_id, session_id, user_message, ai_response, query_result)
-#                         VALUES (%s, %s, %s, %s, %s)
-#                     ''', (
-#                         active_project_id,
-#                         session_id,
-#                         question,
-#                         result.get('answer', ''),
-#                         json.dumps(result, ensure_ascii=False, cls=DateTimeEncoder)
-#                     ))
+                # Save to database
+                if active_project_id and session_id:
+                    conn = get_db_connection()
+                    cur = conn.cursor(cursor_factory=RealDictCursor)
+                    cur.execute('''
+                        INSERT INTO chat_history (project_id, session_id, user_message, ai_response, query_result)
+                        VALUES (%s, %s, %s, %s, %s)
+                    ''', (
+                        active_project_id,
+                        session_id,
+                        question,
+                        result.get('answer', ''),
+                        json.dumps(result, ensure_ascii=False, cls=DateTimeEncoder)
+                    ))
                     
-#                     # Update session timestamp and title
-#                     cur.execute('''
-#                         UPDATE chat_sessions 
-#                         SET updated_at = CURRENT_TIMESTAMP 
-#                         WHERE id = %s
-#                     ''', (session_id,))
+                    # Update session timestamp and title
+                    cur.execute('''
+                        UPDATE chat_sessions 
+                        SET updated_at = CURRENT_TIMESTAMP 
+                        WHERE id = %s
+                    ''', (session_id,))
                     
-#                     cur.execute('''
-#                         SELECT title, 
-#                                (SELECT COUNT(*) FROM chat_history WHERE session_id = %s) as msg_count
-#                         FROM chat_sessions 
-#                         WHERE id = %s
-#                     ''', (session_id, session_id))
-#                     session_info = cur.fetchone()
+                    cur.execute('''
+                        SELECT title, 
+                               (SELECT COUNT(*) FROM chat_history WHERE session_id = %s) as msg_count
+                        FROM chat_sessions 
+                        WHERE id = %s
+                    ''', (session_id, session_id))
+                    session_info = cur.fetchone()
                     
-#                     if session_info and session_info['title'] == 'New Chat' and session_info['msg_count'] == 1:
-#                         auto_title = question[:50] + ('...' if len(question) > 50 else '')
-#                         cur.execute('''
-#                             UPDATE chat_sessions 
-#                             SET title = %s 
-#                             WHERE id = %s
-#                         ''', (auto_title, session_id))
+                    if session_info and session_info['title'] == 'New Chat' and session_info['msg_count'] == 1:
+                        auto_title = question[:50] + ('...' if len(question) > 50 else '')
+                        cur.execute('''
+                            UPDATE chat_sessions 
+                            SET title = %s 
+                            WHERE id = %s
+                        ''', (auto_title, session_id))
                     
-#                     conn.commit()
-#                     cur.close()
-#                     conn.close()
+                    conn.commit()
+                    cur.close()
+                    conn.close()
                 
-#                 with task_lock:
-#                     chat_tasks[task_id]['status'] = 'completed'
-#                     chat_tasks[task_id]['result'] = result
-#                     chat_tasks[task_id]['session_id'] = session_id
+                with task_lock:
+                    chat_tasks[task_id]['status'] = 'completed'
+                    chat_tasks[task_id]['result'] = result
+                    chat_tasks[task_id]['session_id'] = session_id
                     
-#             except Exception as e:
-#                 import traceback
-#                 error_traceback = traceback.format_exc()
-#                 print(f"ERROR in run_task: {error_traceback}", flush=True)
-#                 with task_lock:
-#                     chat_tasks[task_id]['status'] = 'error'
-#                     chat_tasks[task_id]['error'] = str(e)
-#                     chat_tasks[task_id]['steps'].append(f"❌ エラー: {str(e)}")
-#                     chat_tasks[task_id]['traceback'] = error_traceback
+            except Exception as e:
+                import traceback
+                error_traceback = traceback.format_exc()
+                print(f"ERROR in run_task: {error_traceback}", flush=True)
+                with task_lock:
+                    chat_tasks[task_id]['status'] = 'error'
+                    chat_tasks[task_id]['error'] = str(e)
+                    chat_tasks[task_id]['steps'].append(f"❌ エラー: {str(e)}")
+                    chat_tasks[task_id]['traceback'] = error_traceback
         
-#         thread = threading.Thread(target=run_task)
-#         thread.daemon = True
-#         thread.start()
+        thread = threading.Thread(target=run_task)
+        thread.daemon = True
+        thread.start()
         
-#         return jsonify({
-#             "task_id": task_id,
-#             "session_id": session_id
-#         })
+        return jsonify({
+            "task_id": task_id,
+            "session_id": session_id
+        })
     
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/chat/status/<task_id>', methods=['GET'])
-# @login_required
-# def chat_status(task_id):
-#     """Get chat task status and progress"""
-#     with task_lock:
-#         task = chat_tasks.get(task_id)
-#         if not task:
-#             return jsonify({"error": "Task not found"}), 404
+@app.route('/api/chat/status/<task_id>', methods=['GET'])
+@login_required
+def chat_status(task_id):
+    """Get chat task status and progress"""
+    with task_lock:
+        task = chat_tasks.get(task_id)
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
         
-#         return jsonify({
-#             "status": task['status'],
-#             "steps": task['steps'],
-#             "result": task['result'],
-#             "error": task['error'],
-#             "session_id": task.get('session_id')
-#         })
+        return jsonify({
+            "status": task['status'],
+            "steps": task['steps'],
+            "result": task['result'],
+            "error": task['error'],
+            "session_id": task.get('session_id')
+        })
 
-# @app.route('/api/config', methods=['GET'])
-# def get_config():
-#     """Get configuration status"""
-#     return jsonify({
-#         "project_id": PROJECT_ID,
-#         "dataset": DEFAULT_DATASET,
-#         "openai_configured": bool(OPENAI_API_KEY),
-#         "gcp_configured": bool(GCP_SA_JSON)
-#     })
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """Get configuration status"""
+    return jsonify({
+        "project_id": PROJECT_ID,
+        "dataset": DEFAULT_DATASET,
+        "openai_configured": bool(OPENAI_API_KEY),
+        "gcp_configured": bool(GCP_SA_JSON)
+    })
 
-# @app.route('/projects')
-# @login_required
-# def projects():
-#     """Render projects page"""
-#     return render_template('projects.html')
+@app.route('/projects')
+@login_required
+def projects():
+    """Render projects page"""
+    return render_template('projects.html')
 
-# @app.route('/settings')
-# @login_required
-# def settings():
-#     """Render settings page"""
-#     return render_template('settings.html')
+@app.route('/settings')
+@login_required
+def settings():
+    """Render settings page"""
+    return render_template('settings.html')
 
-# @app.route('/api/settings', methods=['GET'])
-# @login_required
-# def get_settings():
-#     """Get active project settings"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
-#                    openai_api_key IS NOT NULL as has_api_key,
-#                    service_account_json IS NOT NULL as has_service_account
-#             FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
-#         cur.close()
-#         conn.close()
+@app.route('/api/settings', methods=['GET'])
+@login_required
+def get_settings():
+    """Get active project settings"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
+                   openai_api_key IS NOT NULL as has_api_key,
+                   service_account_json IS NOT NULL as has_service_account
+            FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if not project:
-#             return jsonify({
-#                 "success": False,
-#                 "error": "アクティブなプロジェクトが選択されていません。プロジェクトを作成・選択してください。",
-#                 "no_project": True
-#             }), 404
+        if not project:
+            return jsonify({
+                "success": False,
+                "error": "アクティブなプロジェクトが選択されていません。プロジェクトを作成・選択してください。",
+                "no_project": True
+            }), 404
         
-#         return jsonify({
-#             "success": True,
-#             "project_id": project['bigquery_project_id'] or '',
-#             "dataset": project['bigquery_dataset_id'] or '',
-#             "has_api_key": project['has_api_key'],
-#             "has_service_account": project['has_service_account'],
-#             "project_name": project['name'],
-#             "project_description": project['description'] or '',
-#             "openai_model": OPENAI_MODEL,  # モデルはグローバル設定
-#             "location": LOCATION  # ロケーションはグローバル設定
-#         })
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+        return jsonify({
+            "success": True,
+            "project_id": project['bigquery_project_id'] or '',
+            "dataset": project['bigquery_dataset_id'] or '',
+            "has_api_key": project['has_api_key'],
+            "has_service_account": project['has_service_account'],
+            "project_name": project['name'],
+            "project_description": project['description'] or '',
+            "openai_model": OPENAI_MODEL,  # モデルはグローバル設定
+            "location": LOCATION  # ロケーションはグローバル設定
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/settings', methods=['POST'])
-# @login_required
-# def save_settings():
-#     """Save settings to active project"""
-#     try:
-#         # Get active project
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT id FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
+@app.route('/api/settings', methods=['POST'])
+@login_required
+def save_settings():
+    """Save settings to active project"""
+    try:
+        # Get active project
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT id FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
         
-#         if not project:
-#             cur.close()
-#             conn.close()
-#             return jsonify({
-#                 "success": False,
-#                 "error": "アクティブなプロジェクトが選択されていません"
-#             }), 404
+        if not project:
+            cur.close()
+            conn.close()
+            return jsonify({
+                "success": False,
+                "error": "アクティブなプロジェクトが選択されていません"
+            }), 404
         
-#         project_id = project['id']
+        project_id = project['id']
         
-#         # Build update fields
-#         update_fields = []
-#         params = []
+        # Build update fields
+        update_fields = []
+        params = []
         
-#         # Handle project name
-#         if request.form.get('project_name'):
-#             update_fields.append('name = %s')
-#             params.append(request.form.get('project_name'))
+        # Handle project name
+        if request.form.get('project_name'):
+            update_fields.append('name = %s')
+            params.append(request.form.get('project_name'))
         
-#         # Handle project description
-#         if 'project_description' in request.form:
-#             update_fields.append('description = %s')
-#             params.append(request.form.get('project_description'))
+        # Handle project description
+        if 'project_description' in request.form:
+            update_fields.append('description = %s')
+            params.append(request.form.get('project_description'))
         
-#         # Handle OpenAI API key
-#         if request.form.get('openai_key'):
-#             update_fields.append('openai_api_key = %s')
-#             params.append(request.form.get('openai_key'))
+        # Handle OpenAI API key
+        if request.form.get('openai_key'):
+            update_fields.append('openai_api_key = %s')
+            params.append(request.form.get('openai_key'))
         
-#         # Handle BigQuery project ID
-#         if request.form.get('project_id'):
-#             update_fields.append('bigquery_project_id = %s')
-#             params.append(request.form.get('project_id'))
+        # Handle BigQuery project ID
+        if request.form.get('project_id'):
+            update_fields.append('bigquery_project_id = %s')
+            params.append(request.form.get('project_id'))
         
-#         # Handle BigQuery dataset
-#         if request.form.get('default_dataset'):
-#             update_fields.append('bigquery_dataset_id = %s')
-#             params.append(request.form.get('default_dataset'))
+        # Handle BigQuery dataset
+        if request.form.get('default_dataset'):
+            update_fields.append('bigquery_dataset_id = %s')
+            params.append(request.form.get('default_dataset'))
         
-#         # Handle GCP JSON file upload
-#         if 'gcp_json' in request.files:
-#             json_file = request.files['gcp_json']
-#             if json_file.filename:
-#                 # Save the JSON file with project-specific name
-#                 json_path = os.path.join(os.getcwd(), f'gcp_credentials_project_{project_id}.json')
-#                 json_file.save(json_path)
-#                 update_fields.append('service_account_json = %s')
-#                 params.append(json_path)
+        # Handle GCP JSON file upload
+        if 'gcp_json' in request.files:
+            json_file = request.files['gcp_json']
+            if json_file.filename:
+                # Save the JSON file with project-specific name
+                json_path = os.path.join(os.getcwd(), f'gcp_credentials_project_{project_id}.json')
+                json_file.save(json_path)
+                update_fields.append('service_account_json = %s')
+                params.append(json_path)
         
-#         if not update_fields:
-#             cur.close()
-#             conn.close()
-#             return jsonify({
-#                 "success": False,
-#                 "error": "更新する設定がありません"
-#             }), 400
+        if not update_fields:
+            cur.close()
+            conn.close()
+            return jsonify({
+                "success": False,
+                "error": "更新する設定がありません"
+            }), 400
         
-#         # Update project
-#         update_fields.append('updated_at = CURRENT_TIMESTAMP')
-#         params.extend([project_id, current_user.id])
+        # Update project
+        update_fields.append('updated_at = CURRENT_TIMESTAMP')
+        params.extend([project_id, current_user.id])
         
-#         query = f'''
-#             UPDATE projects
-#             SET {', '.join(update_fields)}
-#             WHERE id = %s AND user_id = %s
-#         '''
+        query = f'''
+            UPDATE projects
+            SET {', '.join(update_fields)}
+            WHERE id = %s AND user_id = %s
+        '''
         
-#         cur.execute(query, params)
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        cur.execute(query, params)
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "message": "設定を保存しました"
-#         })
+        return jsonify({
+            "success": True,
+            "message": "設定を保存しました"
+        })
     
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-# @app.route('/api/get-api-key')
-# @login_required
-# def get_api_key():
-#     """Get OpenAI API key for active project"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT openai_api_key FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
-#         cur.close()
-#         conn.close()
+@app.route('/api/get-api-key')
+@login_required
+def get_api_key():
+    """Get OpenAI API key for active project"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT openai_api_key FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if not project:
-#             return jsonify({"api_key": ""})
+        if not project:
+            return jsonify({"api_key": ""})
         
-#         return jsonify({
-#             "api_key": project['openai_api_key'] or ""
-#         })
-#     except Exception as e:
-#         return jsonify({"api_key": ""}), 500
+        return jsonify({
+            "api_key": project['openai_api_key'] or ""
+        })
+    except Exception as e:
+        return jsonify({"api_key": ""}), 500
 
-# @app.route('/api/get-json-file-info')
-# @login_required
-# def get_json_file_info():
-#     """Get information about uploaded JSON file for active project"""
-#     try:
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT service_account_json FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
-#         cur.close()
-#         conn.close()
+@app.route('/api/get-json-file-info')
+@login_required
+def get_json_file_info():
+    """Get information about uploaded JSON file for active project"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT service_account_json FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if not project:
-#             return jsonify({"exists": False})
+        if not project:
+            return jsonify({"exists": False})
         
-#         json_path = project['service_account_json']
-#         if json_path and os.path.exists(json_path):
-#             filename = os.path.basename(json_path)
-#             return jsonify({
-#                 "exists": True,
-#                 "filename": filename,
-#                 "path": json_path
-#             })
+        json_path = project['service_account_json']
+        if json_path and os.path.exists(json_path):
+            filename = os.path.basename(json_path)
+            return jsonify({
+                "exists": True,
+                "filename": filename,
+                "path": json_path
+            })
         
-#         return jsonify({"exists": False})
-#     except Exception as e:
-#         return jsonify({"exists": False}), 500
+        return jsonify({"exists": False})
+    except Exception as e:
+        return jsonify({"exists": False}), 500
 
-# @app.route('/api/delete-json-file', methods=['POST'])
-# @login_required
-# def delete_json_file():
-#     """Delete uploaded JSON file for active project"""
-#     try:
-#         # Get active project
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT id, service_account_json FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
+@app.route('/api/delete-json-file', methods=['POST'])
+@login_required
+def delete_json_file():
+    """Delete uploaded JSON file for active project"""
+    try:
+        # Get active project
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT id, service_account_json FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
         
-#         if not project:
-#             cur.close()
-#             conn.close()
-#             return jsonify({
-#                 "success": False,
-#                 "error": "アクティブなプロジェクトが選択されていません"
-#             }), 404
+        if not project:
+            cur.close()
+            conn.close()
+            return jsonify({
+                "success": False,
+                "error": "アクティブなプロジェクトが選択されていません"
+            }), 404
         
-#         # Delete physical file if it exists
-#         json_path = project['service_account_json']
-#         if json_path and os.path.exists(json_path):
-#             os.remove(json_path)
+        # Delete physical file if it exists
+        json_path = project['service_account_json']
+        if json_path and os.path.exists(json_path):
+            os.remove(json_path)
         
-#         # Update database to remove JSON path
-#         cur.execute('''
-#             UPDATE projects
-#             SET service_account_json = NULL, updated_at = CURRENT_TIMESTAMP
-#             WHERE id = %s AND user_id = %s
-#         ''', (project['id'], current_user.id))
+        # Update database to remove JSON path
+        cur.execute('''
+            UPDATE projects
+            SET service_account_json = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s AND user_id = %s
+        ''', (project['id'], current_user.id))
         
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         
-#         return jsonify({
-#             "success": True,
-#             "message": "JSON file deleted successfully"
-#         })
+        return jsonify({
+            "success": True,
+            "message": "JSON file deleted successfully"
+        })
     
-#     except Exception as e:
-#         return jsonify({
-#             "error": str(e)
-#         }), 500
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
 
-# @app.route('/api/test-connection', methods=['POST'])
-# @login_required
-# def test_connection():
-#     """Test OpenAI and BigQuery connection for active project"""
-#     try:
-#         # Get active project configuration
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('''
-#             SELECT openai_api_key, bigquery_project_id, bigquery_dataset_id, service_account_json
-#             FROM projects
-#             WHERE user_id = %s AND is_active = true
-#             LIMIT 1
-#         ''', (current_user.id,))
-#         project = cur.fetchone()
-#         cur.close()
-#         conn.close()
+@app.route('/api/test-connection', methods=['POST'])
+@login_required
+def test_connection():
+    """Test OpenAI and BigQuery connection for active project"""
+    try:
+        # Get active project configuration
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT openai_api_key, bigquery_project_id, bigquery_dataset_id, service_account_json
+            FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if not project:
-#             return jsonify({
-#                 "success": False,
-#                 "error": "アクティブなプロジェクトが選択されていません"
-#             }), 404
+        if not project:
+            return jsonify({
+                "success": False,
+                "error": "アクティブなプロジェクトが選択されていません"
+            }), 404
         
-#         api_key = project['openai_api_key']
-#         project_id = project['bigquery_project_id']
-#         gcp_json = project['service_account_json']
+        api_key = project['openai_api_key']
+        project_id = project['bigquery_project_id']
+        gcp_json = project['service_account_json']
         
-#         # Test OpenAI
-#         if not api_key:
-#             return jsonify({"error": "OpenAI API key が設定されていません"}), 400
+        # Test OpenAI
+        if not api_key:
+            return jsonify({"error": "OpenAI API key が設定されていません"}), 400
         
-#         try:
-#             client = OpenAI(api_key=api_key)
-#             client.models.list()
-#             openai_ok = True
-#         except Exception as e:
-#             return jsonify({"error": f"OpenAI 接続エラー: {str(e)}"}), 400
+        try:
+            client = OpenAI(api_key=api_key)
+            client.models.list()
+            openai_ok = True
+        except Exception as e:
+            return jsonify({"error": f"OpenAI 接続エラー: {str(e)}"}), 400
         
-#         # Test BigQuery
-#         if not project_id or not gcp_json:
-#             return jsonify({"error": "BigQuery が完全に設定されていません"}), 400
+        # Test BigQuery
+        if not project_id or not gcp_json:
+            return jsonify({"error": "BigQuery が完全に設定されていません"}), 400
         
-#         if not os.path.exists(gcp_json):
-#             return jsonify({"error": f"GCP 認証ファイルが見つかりません: {gcp_json}"}), 400
+        if not os.path.exists(gcp_json):
+            return jsonify({"error": f"GCP 認証ファイルが見つかりません: {gcp_json}"}), 400
         
-#         return jsonify({
-#             "success": True,
-#             "message": "すべての接続が成功しました！OpenAIとBigQueryが正しく設定されています。"
-#         })
+        return jsonify({
+            "success": True,
+            "message": "すべての接続が成功しました！OpenAIとBigQueryが正しく設定されています。"
+        })
     
-#     except Exception as e:
-#         import traceback
-#         return jsonify({
-#             "error": str(e),
-#             "traceback": traceback.format_exc()
-#         }), 500
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 # # ============================================
 # # Project Management API
