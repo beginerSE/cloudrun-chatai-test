@@ -40,8 +40,8 @@ class DateTimeEncoder(json.JSONEncoder):
 # GCP_SA_JSON = os.getenv("GCP_SA_JSON", "")
 # DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# app = Flask(__name__)
-# app.config['SECRET_KEY'] = os.getenv('SESSION_SECRET', 'dev-secret-key-change-in-production')
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SESSION_SECRET', 'dev-secret-key-change-in-production')
 
 # # Configure Flask to use DateTimeEncoder for all JSON responses
 # from flask.json.provider import DefaultJSONProvider
