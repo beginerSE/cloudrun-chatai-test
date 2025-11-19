@@ -3198,7 +3198,8 @@ def delete_account():
             "traceback": traceback.format_exc()
         }), 500
 
-Security headers for production
+# Security headers for production
+
 @app.after_request
 def set_security_headers(response):
     """Set security headers for all responses"""
