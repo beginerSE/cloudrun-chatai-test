@@ -64,8 +64,33 @@ chat_tasks = {}  # {task_id: {'status': 'running'|'completed'|'error', 'steps': 
 task_lock = threading.Lock()
 
 # Database connection
+# def get_db_connection():
+#     conn = psycopg2.connect(DATABASE_URL)
+#     return conn
+
+# Database接続(CloudSQL用)
 def get_db_connection():
-    conn = psycopg2.connect(DATABASE_URL)
+    """
+    Cloud Run compatible database connection.
+    Supports both Cloud SQL Unix socket and standard PostgreSQL URL.
+    """
+    # Check if running in Cloud Run with Cloud SQL
+    cloud_sql_instance = os.getenv('CLOUD_SQL_CONNECTION_NAME')
+    
+    if cloud_sql_instance:
+        # Cloud Run with Cloud SQL via Unix socket
+        db_user = os.getenv('DB_USER', 'postgres')
+        db_pass = os.getenv('DB_PASSWORD', 'postgres')
+        db_name = os.getenv('DB_NAME', 'postgres')
+        
+        # Unix socket connection for Cloud Run
+        unix_socket = f'/cloudsql/{cloud_sql_instance}'
+        connection_string = f'postgresql://{db_user}:{db_pass}@/{db_name}?host={unix_socket}'
+        conn = psycopg2.connect(connection_string)
+    else:
+        # Local development or standard PostgreSQL URL
+        conn = psycopg2.connect(DATABASE_URL)
+    
     return conn
 
 # Safe redirect helper
