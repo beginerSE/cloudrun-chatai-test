@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}ホーム - BigQuery AI データ分析エージェント{% endblock %}
+
+{% block navbar_content %}
+<span id="username-display">{{ current_user.username }} さん</span>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">
+            <i class="bi bi-house-door"></i> ダッシュボード
+        </h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8 mb-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-info-circle text-primary"></i> BigQuery AI データ分析エージェントへようこそ
+                </h5>
+                <p class="card-text">
+                    ChatGPT APIとBigQuery MCPサーバーを組み合わせたデータ分析AIエージェントです。
+                    自然言語でBigQueryにクエリを実行し、結果を表形式やグラフで表示します。
+                </p>
+                <hr>
+                <h6 class="mt-3"><i class="bi bi-check-circle text-success"></i> 主な機能</h6>
+                <ul>
+                    <li>自然言語によるBigQueryクエリ実行</li>
+                    <li>テーブルの自動検索とスキーマ抽出</li>
+                    <li>SQLクエリの自動生成と実行</li>
+                    <li>クエリ結果のテーブル表示とグラフ可視化</li>
+                    <li>複数回の会話による分析の深掘り</li>
+                    <li>読み取り専用クエリの強制（データ保護）</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm border-primary">
+            <div class="card-body text-center">
+                <i class="bi bi-database" style="font-size: 3rem; color: #667eea;"></i>
+                <h5 class="card-title mt-3">クイックスタート</h5>
+                <p class="card-text text-muted">
+                    AIチャットを使ってデータ分析を始めましょう
+                </p>
+                <a href="/agent-chat" class="btn btn-primary btn-lg w-100">
+                    <i class="bi bi-chat-dots"></i> AIチャットを開く
+                </a>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mt-3" id="config-status-card">
+            <div class="card-body">
+                <h6 class="card-title">
+                    <i class="bi bi-gear"></i> 設定状態
+                </h6>
+                <div id="config-status-content">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                        <span class="visually-hidden">読み込み中...</span>
+                    </div>
+                    <span class="ms-2">確認中...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-chat-dots text-info"></i> AIチャット
+                </h5>
+                <p class="card-text">
+                    自然言語でデータについて質問し、AIが自動的にSQLを生成して実行します。
+                </p>
+                <a href="/agent-chat" class="btn btn-outline-info">
+                    チャットを開く <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-gear text-warning"></i> 設定
+                </h5>
+                <p class="card-text">
+                    OpenAI APIキー、BigQuery接続情報などを管理します。
+                </p>
+                <a href="/settings" class="btn btn-outline-warning">
+                    設定を開く <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-book text-success"></i> 使い方
+                </h5>
+                <p class="card-text">
+                    質問例：「売上トップ10の商品を表示して」「今月の売上合計を教えて」
+                </p>
+                <a href="/agent-chat" class="btn btn-outline-success">
+                    試してみる <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    fetch('/api/config')
+        .then(response => response.json())
+        .then(data => {
+            const statusContent = document.getElementById('config-status-content');
+            if (data.is_configured) {
+                statusContent.innerHTML = `
+                    <div class="text-success">
+                        <i class="bi bi-check-circle-fill"></i> 設定完了
+                    </div>
+                    <small class="text-muted">
+                        プロジェクト: ${data.project_id || 'N/A'}
+                    </small>
+                `;
+            } else {
+                statusContent.innerHTML = `
+                    <div class="text-warning">
+                        <i class="bi bi-exclamation-triangle-fill"></i> 未設定
+                    </div>
+                    <small class="text-muted">
+                        OpenAI APIキーまたはBigQuery設定が必要です
+                    </small>
+                    <a href="/settings" class="btn btn-sm btn-warning mt-2 w-100">
+                        設定する
+                    </a>
+                `;
+            }
+        })
+        .catch(error => {
+            document.getElementById('config-status-content').innerHTML = `
+                <div class="text-danger">
+                    <i class="bi bi-x-circle-fill"></i> エラー
+                </div>
+            `;
+        });
+</script>
+{% endblock %}
