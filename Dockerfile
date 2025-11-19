@@ -26,12 +26,9 @@ FROM python:3.13-slim
 # Set working directory
 WORKDIR /app
 
-# Install runtime dependencies only
+# Install runtime dependencies only (PostgreSQL client library)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
-    nodejs \
-    npm \
-    && npm install -g mcp-server-bigquery \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
