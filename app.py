@@ -1812,42 +1812,42 @@ app.config['SECRET_KEY'] = os.getenv('SESSION_SECRET', 'dev-secret-key-change-in
 #         "timestamp": datetime.now().isoformat()
 #     }), 200
 
-# @app.route('/')
-# @login_required
-# def index():
-#     """Render dashboard page"""
-#     return render_template('dashboard.html')
+@app.route('/')
+@login_required
+def index():
+    """Render dashboard page"""
+    return render_template('dashboard.html')
 
-# @app.route('/login', methods=['GET', 'POST'])
-# def login():
-#     """Handle login"""
-#     if current_user.is_authenticated:
-#         return redirect(url_for('index'))
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Handle login"""
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
     
-#     if request.method == 'POST':
-#         username = request.form.get('username')
-#         password = request.form.get('password')
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
         
-#         conn = get_db_connection()
-#         cur = conn.cursor(cursor_factory=RealDictCursor)
-#         cur.execute('SELECT * FROM users WHERE username = %s', (username,))
-#         user_data = cur.fetchone()
-#         cur.close()
-#         conn.close()
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('SELECT * FROM users WHERE username = %s', (username,))
+        user_data = cur.fetchone()
+        cur.close()
+        conn.close()
         
-#         if user_data and bcrypt.checkpw(password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
-#             user = User(user_data['id'], user_data['username'], user_data['email'])
-#             login_user(user, remember=request.form.get('remember'))
+        if user_data and bcrypt.checkpw(password.encode('utf-8'), user_data['password_hash'].encode('utf-8')):
+            user = User(user_data['id'], user_data['username'], user_data['email'])
+            login_user(user, remember=request.form.get('remember'))
             
-#             # Safe redirect - only allow same-origin redirects
-#             next_page = get_redirect_target()
-#             if not next_page or not is_safe_url(next_page):
-#                 next_page = url_for('index')
-#             return redirect(next_page)
-#         else:
-#             flash('ユーザー名またはパスワードが正しくありません。', 'error')
+            # Safe redirect - only allow same-origin redirects
+            next_page = get_redirect_target()
+            if not next_page or not is_safe_url(next_page):
+                next_page = url_for('index')
+            return redirect(next_page)
+        else:
+            flash('ユーザー名またはパスワードが正しくありません。', 'error')
     
-#     return render_template('login.html')
+    return render_template('login.html')
 
 # @app.route('/signup', methods=['GET', 'POST'])
 # def signup():
@@ -3187,7 +3187,7 @@ app.config['SECRET_KEY'] = os.getenv('SESSION_SECRET', 'dev-secret-key-change-in
 #     return response
 
 
-@app.route("/")
+@app.route("/test")
 def root():
     return jsonify(
         {
