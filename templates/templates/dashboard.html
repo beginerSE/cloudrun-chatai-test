@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+
+{% block title %}ホーム - BigQuery AI データ分析エージェント{% endblock %}
+
+{% block navbar_content %}
+<span id="username-display">{{ current_user.username }} さん</span>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">
+            <i class="bi bi-house-door"></i> ダッシュボード
+        </h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8 mb-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-info-circle text-primary"></i> BigQuery AI データ分析エージェントへようこそ
+                </h5>
+                <p class="card-text">
+                    ChatGPT APIとBigQuery MCPサーバーを組み合わせたデータ分析AIエージェントです。
+                    自然言語でBigQueryにクエリを実行し、結果を表形式やグラフで表示します。
+                </p>
+                <hr>
+                <h6 class="mt-3"><i class="bi bi-check-circle text-success"></i> 主な機能</h6>
+                <ul>
+                    <li>自然言語によるBigQueryクエリ実行</li>
+                    <li>テーブルの自動検索とスキーマ抽出</li>
+                    <li>SQLクエリの自動生成と実行</li>
+                    <li>クエリ結果のテーブル表示とグラフ可視化</li>
+                    <li>複数回の会話による分析の深掘り</li>
+                    <li>読み取り専用クエリの強制（データ保護）</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm border-primary">
+            <div class="card-body text-center">
+                <i class="bi bi-database" style="font-size: 3rem; color: #667eea;"></i>
+                <h5 class="card-title mt-3">クイックスタート</h5>
+                <p class="card-text text-muted">
+                    AIチャットを使ってデータ分析を始めましょう
+                </p>
+                <a href="/agent-chat" class="btn btn-primary btn-lg w-100">
+                    <i class="bi bi-chat-dots"></i> AIチャットを開く
+                </a>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mt-3" id="config-status-card">
+            <div class="card-body">
+                <h6 class="card-title">
+                    <i class="bi bi-gear"></i> 設定状態
+                </h6>
+                <div id="config-status-content">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                        <span class="visually-hidden">読み込み中...</span>
+                    </div>
+                    <span class="ms-2">確認中...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-chat-dots text-info"></i> AIチャット
+                </h5>
+                <p class="card-text">
+                    自然言語でデータについて質問し、AIが自動的にSQLを生成して実行します。
+                </p>
+                <a href="/agent-chat" class="btn btn-outline-info">
+                    チャットを開く <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-gear text-warning"></i> 設定
+                </h5>
+                <p class="card-text">
+                    OpenAI APIキー、BigQuery接続情報などを管理します。
+                </p>
+                <a href="/settings" class="btn btn-outline-warning">
+                    設定を開く <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-book text-success"></i> 使い方
+                </h5>
+                <p class="card-text">
+                    質問例：「売上トップ10の商品を表示して」「今月の売上合計を教えて」
+                </p>
+                <a href="/agent-chat" class="btn btn-outline-success">
+                    試してみる <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-diagram-3 text-primary"></i> BigQueryスキーマツリー
+                </h5>
+                <button id="refresh-schema-btn" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-arrow-clockwise"></i> 更新
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="schema-tree-content">
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-info-circle"></i> 「更新」ボタンをクリックしてスキーマを読み込んでください
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentProjectId = null;
+
+    fetch('/api/config')
+        .then(response => response.json())
+        .then(data => {
+            const statusContent = document.getElementById('config-status-content');
+            if (data.is_configured) {
+                statusContent.innerHTML = `
+                    <div class="text-success">
+                        <i class="bi bi-check-circle-fill"></i> 設定完了
+                    </div>
+                    <small class="text-muted">
+                        プロジェクト: ${data.project_id || 'N/A'}
+                    </small>
+                `;
+            } else {
+                statusContent.innerHTML = `
+                    <div class="text-warning">
+                        <i class="bi bi-exclamation-triangle-fill"></i> 未設定
+                    </div>
+                    <small class="text-muted">
+                        OpenAI APIキーまたはBigQuery設定が必要です
+                    </small>
+                    <a href="/settings" class="btn btn-sm btn-warning mt-2 w-100">
+                        設定する
+                    </a>
+                `;
+            }
+        })
+        .catch(error => {
+            document.getElementById('config-status-content').innerHTML = `
+                <div class="text-danger">
+                    <i class="bi bi-x-circle-fill"></i> エラー
+                </div>
+            `;
+        });
+
+    fetch('/api/projects/active')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.project) {
+                currentProjectId = data.project.id;
+            }
+        });
+
+    document.getElementById('refresh-schema-btn').addEventListener('click', async function() {
+        const btn = this;
+        const content = document.getElementById('schema-tree-content');
+        
+        if (!currentProjectId) {
+            content.innerHTML = `
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i> アクティブなプロジェクトがありません。設定画面でプロジェクトを作成・設定してください。
+                </div>
+            `;
+            return;
+        }
+        
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 読み込み中...';
+        
+        content.innerHTML = `
+            <div class="text-center text-muted py-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">読み込み中...</span>
+                </div>
+                <p class="mt-2">BigQueryからスキーマ情報を取得中...</p>
+            </div>
+        `;
+        
+        try {
+            const response = await fetch(`/api/projects/${currentProjectId}/schema-tree`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'スキーマの取得に失敗しました');
+            }
+            
+            if (data.success && data.schema_tree.datasets) {
+                renderSchemaTree(data.schema_tree.datasets);
+            } else {
+                content.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i> テーブルが見つかりませんでした
+                    </div>
+                `;
+            }
+        } catch (error) {
+            content.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-circle"></i> エラー: ${error.message}
+                </div>
+            `;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 更新';
+        }
+    });
+
+    function renderSchemaTree(datasets) {
+        const content = document.getElementById('schema-tree-content');
+        
+        if (!datasets || datasets.length === 0) {
+            content.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i> テーブルが見つかりませんでした
+                </div>
+            `;
+            return;
+        }
+        
+        let html = '<div class="schema-tree">';
+        
+        datasets.forEach(dataset => {
+            html += `
+                <div class="dataset-node mb-3">
+                    <div class="d-flex align-items-center mb-2">
+                        <button class="btn btn-sm btn-link text-decoration-none p-0 me-2 dataset-toggle" data-dataset="${dataset.name}">
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                        <i class="bi bi-folder-fill text-warning me-2"></i>
+                        <strong>${dataset.name}</strong>
+                        <span class="badge bg-secondary ms-2">${dataset.tables.length} テーブル</span>
+                    </div>
+                    <div class="tables-container ms-4" style="display: none;" data-dataset="${dataset.name}">
+            `;
+            
+            dataset.tables.forEach(table => {
+                html += `
+                    <div class="table-node mb-2">
+                        <div class="d-flex align-items-center">
+                            <button class="btn btn-sm btn-link text-decoration-none p-0 me-2 table-toggle" data-table="${dataset.name}.${table.name}">
+                                <i class="bi bi-chevron-right"></i>
+                            </button>
+                            <i class="bi bi-table text-primary me-2"></i>
+                            <span>${table.name}</span>
+                            ${table.columns ? `<span class="badge bg-info ms-2">${table.columns.length} カラム</span>` : ''}
+                        </div>
+                        <div class="columns-container ms-4" style="display: none;" data-table="${dataset.name}.${table.name}">
+                `;
+                
+                if (table.error) {
+                    html += `<div class="text-danger small"><i class="bi bi-exclamation-triangle"></i> ${table.error}</div>`;
+                } else if (table.columns && table.columns.length > 0) {
+                    html += '<ul class="list-unstyled mb-0">';
+                    table.columns.forEach(column => {
+                        html += `
+                            <li class="small py-1">
+                                <i class="bi bi-dash-lg text-muted"></i>
+                                <span class="text-primary">${column.name}</span>
+                                <span class="text-muted">: ${column.type}</span>
+                                ${column.mode !== 'NULLABLE' ? `<span class="badge bg-warning text-dark">${column.mode}</span>` : ''}
+                            </li>
+                        `;
+                    });
+                    html += '</ul>';
+                }
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += '</div>';
+        content.innerHTML = html;
+        
+        document.querySelectorAll('.dataset-toggle').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const datasetName = this.dataset.dataset;
+                const container = document.querySelector(`.tables-container[data-dataset="${datasetName}"]`);
+                const icon = this.querySelector('i');
+                
+                if (container.style.display === 'none') {
+                    container.style.display = 'block';
+                    icon.classList.remove('bi-chevron-right');
+                    icon.classList.add('bi-chevron-down');
+                } else {
+                    container.style.display = 'none';
+                    icon.classList.remove('bi-chevron-down');
+                    icon.classList.add('bi-chevron-right');
+                }
+            });
+        });
+        
+        document.querySelectorAll('.table-toggle').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const tableName = this.dataset.table;
+                const container = document.querySelector(`.columns-container[data-table="${tableName}"]`);
+                const icon = this.querySelector('i');
+                
+                if (container.style.display === 'none') {
+                    container.style.display = 'block';
+                    icon.classList.remove('bi-chevron-right');
+                    icon.classList.add('bi-chevron-down');
+                } else {
+                    container.style.display = 'none';
+                    icon.classList.remove('bi-chevron-down');
+                    icon.classList.add('bi-chevron-right');
+                }
+            });
+        });
+    }
+</script>
+
+<style>
+.schema-tree {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.dataset-toggle, .table-toggle {
+    transition: transform 0.2s;
+}
+
+.dataset-toggle:hover, .table-toggle:hover {
+    transform: scale(1.1);
+}
+
+.dataset-node, .table-node {
+    border-left: 2px solid #e9ecef;
+    padding-left: 0.5rem;
+}
+
+.dataset-node:hover, .table-node:hover {
+    border-left-color: #667eea;
+}
+</style>
+{% endblock %}
