@@ -4,6 +4,7 @@ import re
 import json
 import ast
 import asyncio
+import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from contextlib import AsyncExitStack
@@ -19,6 +20,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from urllib.parse import urlparse, urljoin
 from dotenv import load_dotenv
 from openai import OpenAI
+import google.generativeai as genai
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -134,7 +136,7 @@ def get_active_project_config(user_id):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute('''
-        SELECT openai_api_key, bigquery_project_id, bigquery_dataset_id, service_account_json
+        SELECT openai_api_key, gemini_api_key, ai_provider, bigquery_project_id, bigquery_dataset_id, service_account_json
         FROM projects
         WHERE user_id = %s AND is_active = true
         LIMIT 1
@@ -144,8 +146,11 @@ def get_active_project_config(user_id):
     conn.close()
     
     if project:
+        provider = project['ai_provider'] or 'openai'
         return {
             'api_key': project['openai_api_key'] or OPENAI_API_KEY,
+            'gemini_api_key': project['gemini_api_key'],
+            'provider': provider,
             'project_id': project['bigquery_project_id'] or PROJECT_ID,
             'dataset_id': project['bigquery_dataset_id'] or DEFAULT_DATASET,
             'service_account_json': project['service_account_json'] or GCP_SA_JSON
@@ -154,6 +159,8 @@ def get_active_project_config(user_id):
         # Fall back to environment variables
         return {
             'api_key': OPENAI_API_KEY,
+            'gemini_api_key': None,
+            'provider': 'openai',
             'project_id': PROJECT_ID,
             'dataset_id': DEFAULT_DATASET,
             'service_account_json': GCP_SA_JSON
@@ -617,15 +624,67 @@ def build_openai_tools_schema() -> List[Dict[str, Any]]:
         }
     ]
 
+def build_gemini_tools_schema() -> List[Dict[str, Any]]:
+    """Build Gemini function calling schema from OpenAI schema"""
+    
+    def convert_type_to_gemini(obj):
+        """Recursively convert 'type' fields from lowercase to uppercase for Gemini"""
+        if isinstance(obj, dict):
+            new_obj = {}
+            for key, value in obj.items():
+                if key == "type" and isinstance(value, str):
+                    # Convert type to uppercase (object -> OBJECT, string -> STRING, etc.)
+                    new_obj[key] = value.upper()
+                else:
+                    new_obj[key] = convert_type_to_gemini(value)
+            return new_obj
+        elif isinstance(obj, list):
+            return [convert_type_to_gemini(item) for item in obj]
+        else:
+            return obj
+    
+    openai_tools = build_openai_tools_schema()
+    gemini_tools = []
+    
+    for tool in openai_tools:
+        func = tool["function"]
+        gemini_tool = {
+            "name": func["name"],
+            "description": func["description"],
+            "parameters": convert_type_to_gemini(func["parameters"])
+        }
+        gemini_tools.append(gemini_tool)
+    
+    return gemini_tools
+
 async def run_agent(user_question: str, conversation_history: List[Dict[str, str]], 
                     api_key: str = None, project_id: str = None, dataset_id: str = None, 
-                    service_account_json: str = None) -> Dict[str, Any]:
-    """Main agent logic with MCP and OpenAI"""
+                    service_account_json: str = None, project_db_id: int = None, user_id: int = None,
+                    provider: str = 'openai', gemini_api_key: str = None) -> Dict[str, Any]:
+    """Main agent logic with MCP and OpenAI/Gemini"""
     # Use provided parameters or fall back to global variables
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
     dataset_id = dataset_id or DEFAULT_DATASET
     service_account_json = service_account_json or GCP_SA_JSON
+    
+    # Load project memories if project_db_id is provided
+    project_memories = []
+    if project_db_id and user_id:
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute('''
+                SELECT memory_key, memory_value, updated_at
+                FROM project_memories
+                WHERE project_id = %s AND user_id = %s
+                ORDER BY updated_at DESC
+            ''', (project_db_id, user_id))
+            project_memories = cur.fetchall()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Warning: Failed to load project memories: {e}")
     
     env = os.environ.copy()
     if service_account_json:
@@ -650,13 +709,20 @@ async def run_agent(user_question: str, conversation_history: List[Dict[str, str
         
         client = OpenAI(api_key=api_key)
         
+        # Build memory section if memories exist
+        memory_section = ""
+        if project_memories:
+            memory_section = "\n\n## PROJECT MEMORY\nThe following information has been saved across all chat sessions for this project. Use this context to provide more relevant and personalized analysis:\n\n"
+            for mem in project_memories:
+                memory_section += f"### {mem['memory_key']}\n{mem['memory_value']}\n\n"
+        
         messages = [
             {"role": "system", "content": f"""You are an expert BigQuery data analyst assistant with deep knowledge of SQL optimization and data analysis.
 
 ## ENVIRONMENT
 - BigQuery Project: {project_id}
 - Default Dataset: {dataset_id}
-
+{memory_section}
 ## STEP-BY-STEP REASONING FRAMEWORK
 Follow this systematic approach for every user query:
 
@@ -807,105 +873,284 @@ Think step-by-step and show your reasoning process."""}
         messages.extend(conversation_history)
         messages.append({"role": "user", "content": user_question})
         
-        tools = build_openai_tools_schema()
-        
-        for iteration in range(10):
-            # gpt-5の場合は専用パラメーターを使用
-            api_params = {
-                "model": OPENAI_MODEL,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto"
-            }
+        # Provider-based implementation
+        if provider == 'gemini':
+            # =====  GEMINI API IMPLEMENTATION =====
+            genai.configure(api_key=gemini_api_key)
+            gemini_tools = build_gemini_tools_schema()
+            model = genai.GenerativeModel(
+                model_name='gemini-2.5-pro',
+                tools=gemini_tools,
+                system_instruction=messages[0]["content"]  # Use system prompt
+            )
             
-            # gpt-5の場合は reasoning_effort を追加
-            if OPENAI_MODEL.startswith("gpt-5"):
-                api_params["reasoning_effort"] = "high"  # 深い推論を実行
+            # Convert conversation history to Gemini format
+            gemini_contents = []
+            for msg in conversation_history:
+                if msg["role"] == "user":
+                    gemini_contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
+                elif msg["role"] == "assistant":
+                    gemini_contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
             
-            response = client.chat.completions.create(**api_params)
+            # Add current question
+            gemini_contents.append({"role": "user", "parts": [{"text": user_question}]})
             
-            assistant_message = response.choices[0].message
-            messages.append(assistant_message.model_dump())
-            
-            if not assistant_message.tool_calls:
-                return {
-                    "answer": assistant_message.content,
-                    "steps": steps,
-                    "data": result_data,
-                    "charts": result_charts  # 配列で返す
-                }
-            
-            for tool_call in assistant_message.tool_calls:
-                func_name = tool_call.function.name
-                func_args = json.loads(tool_call.function.arguments)
-                
-                steps.append(f"🔧 {func_name}({json.dumps(func_args, ensure_ascii=False)})")
-                
+            # Main iteration loop for Gemini
+            for iteration in range(10):
                 try:
-                    if func_name == "list_tables":
-                        result = await list_tables(session, func_args.get("project", PROJECT_ID))
-                        func_result = json.dumps({"tables": result}, ensure_ascii=False)
-                        
-                    elif func_name == "describe_table":
-                        result = await describe_table(
-                            session,
-                            func_args.get("project", PROJECT_ID),
-                            func_args.get("dataset", DEFAULT_DATASET),
-                            func_args["table"]
-                        )
-                        func_result = json.dumps({"columns": result}, ensure_ascii=False)
-                        
-                    elif func_name == "execute_query":
-                        result = await execute_query(
-                            session,
-                            func_args.get("project", PROJECT_ID),
-                            func_args.get("location", LOCATION),
-                            func_args["query"]
-                        )
-                        result_data = result
-                        steps.append(f"📊 Query returned {len(result)} rows")
-                        
-                        # If data is large, return summary to avoid token limit
-                        if len(result) > 100:
-                            summary = {
-                                "row_count": len(result),
-                                "columns": list(result[0].keys()) if result else [],
-                                "sample_rows": result[:5],
-                                "message": f"Large dataset with {len(result)} rows. Data stored for analysis."
-                            }
-                            func_result = json.dumps(summary, ensure_ascii=False, cls=DateTimeEncoder)
-                        else:
-                            func_result = json.dumps({"rows": result}, ensure_ascii=False, cls=DateTimeEncoder)
-                    else:
-                        func_result = json.dumps({"error": "Unknown function"})
+                    # Generate response
+                    response = model.generate_content(gemini_contents)
+                    
+                    # Check for valid response
+                    if not response.candidates or not response.candidates[0].content.parts:
+                        return {
+                            "answer": "Geminiからレスポンスがありませんでした",
+                            "steps": steps,
+                            "data": result_data,
+                            "charts": result_charts
+                        }
+                    
+                    response_parts = response.candidates[0].content.parts
+                    
+                    # Check for function calls
+                    has_function_call = False
+                    for part in response_parts:
+                        if hasattr(part, 'function_call') and part.function_call:
+                            has_function_call = True
+                            function_call = part.function_call
+                            func_name = function_call.name
+                            func_args = dict(function_call.args)
+                            
+                            steps.append(f"🔧 {func_name}({json.dumps(func_args, ensure_ascii=False)})")
+                            
+                            # Execute tool
+                            try:
+                                if func_name == "list_tables":
+                                    result = await list_tables(session, func_args.get("project", project_id))
+                                    func_result = {"tables": result}
+                                    
+                                elif func_name == "describe_table":
+                                    result = await describe_table(
+                                        session,
+                                        func_args.get("project", project_id),
+                                        func_args.get("dataset", dataset_id),
+                                        func_args.get("table")
+                                    )
+                                    func_result = {"columns": result}
+                                    
+                                elif func_name == "execute_query":
+                                    result = await execute_query(
+                                        session,
+                                        func_args.get("project", project_id),
+                                        func_args.get("location", LOCATION),
+                                        func_args.get("query")
+                                    )
+                                    result_data = result
+                                    steps.append(f"📊 {len(result)}行のデータを取得しました")
+                                    
+                                    if len(result) > 100:
+                                        func_result = {
+                                            "row_count": len(result),
+                                            "columns": list(result[0].keys()) if result else [],
+                                            "sample_rows": result[:5],
+                                            "message": f"Large dataset with {len(result)} rows."
+                                        }
+                                    else:
+                                        func_result = {"rows": result}
+                                        
+                                elif func_name == "suggest_chart":
+                                    chart_config = {
+                                        "chart_type": func_args.get("chart_type", "bar"),
+                                        "x_axis": func_args.get("x_axis"),
+                                        "y_axis": func_args.get("y_axis"),
+                                        "title": func_args.get("title", "")
+                                    }
+                                    result_charts.append(chart_config)
+                                    func_result = {"chart": chart_config}
+                                    steps.append(f"📈 グラフを提案しました: {chart_config['chart_type']}")
+                                    
+                                elif func_name == "execute_python":
+                                    code = func_args.get("code")
+                                    df_dict = {}
+                                    if result_data:
+                                        df_dict['df'] = pd.DataFrame(result_data)
+                                    python_result = execute_python_code(code, df_dict, timeout=30)
+                                    func_result = {
+                                        "output": python_result.get('output', ''),
+                                        "result": python_result.get('result'),
+                                        "plots_count": len(python_result.get('plots', []))
+                                    }
+                                    steps.append(f"🐍 Python実行完了")
+                                    
+                                else:
+                                    func_result = {"error": "Unknown function"}
+                                    
+                            except Exception as e:
+                                error_msg = f"Error executing {func_name}: {str(e)}"
+                                steps.append(f"❌ {error_msg}")
+                                func_result = {"error": error_msg}
+                            
+                            # Add function call and response to conversation
+                            gemini_contents.append({
+                                "role": "model",
+                                "parts": [{"function_call": {"name": func_name, "args": func_args}}]
+                            })
+                            gemini_contents.append({
+                                "role": "user",
+                                "parts": [{"function_response": {"name": func_name, "response": func_result}}]
+                            })
+                    
+                    if not has_function_call:
+                        # Final answer
+                        answer_text = ""
+                        for part in response_parts:
+                            if hasattr(part, 'text'):
+                                answer_text += part.text
+                        return {
+                            "answer": answer_text,
+                            "steps": steps,
+                            "data": result_data,
+                            "charts": result_charts
+                        }
                         
                 except Exception as e:
-                    error_msg = f"Error executing {func_name}: {str(e)}"
-                    steps.append(f"❌ {error_msg}")
-                    func_result = json.dumps({"error": error_msg}, ensure_ascii=False)
-                
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": func_result
-                })
+                    error_msg = f"Gemini API error: {str(e)}"
+                    print(f"ERROR: {error_msg}")
+                    return {
+                        "answer": f"エラーが発生しました: {error_msg}",
+                        "steps": steps,
+                        "data": result_data,
+                        "charts": result_charts
+                    }
+            
+            return {
+                "answer": "最大反復回数に達しました",
+                "steps": steps,
+                "data": result_data,
+                "charts": result_charts
+            }
         
-        return {
-            "answer": "Maximum iterations reached.",
-            "steps": steps,
-            "data": result_data,
-            "charts": result_charts  # 配列で返す
-        }
+        else:  # provider == 'openai'
+            # ===== OPENAI API IMPLEMENTATION =====
+            client = OpenAI(api_key=api_key)
+            tools = build_openai_tools_schema()
+            
+            for iteration in range(10):
+                # gpt-5の場合は専用パラメーターを使用
+                api_params = {
+                    "model": OPENAI_MODEL,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto"
+                }
+                
+                # gpt-5の場合は reasoning_effort を追加
+                if OPENAI_MODEL.startswith("gpt-5"):
+                    api_params["reasoning_effort"] = "high"  # 深い推論を実行
+                
+                response = client.chat.completions.create(**api_params)
+                
+                assistant_message = response.choices[0].message
+                messages.append(assistant_message.model_dump())
+                
+                if not assistant_message.tool_calls:
+                    return {
+                        "answer": assistant_message.content,
+                        "steps": steps,
+                        "data": result_data,
+                        "charts": result_charts  # 配列で返す
+                    }
+                
+                for tool_call in assistant_message.tool_calls:
+                    func_name = tool_call.function.name
+                    func_args = json.loads(tool_call.function.arguments)
+                    
+                    steps.append(f"🔧 {func_name}({json.dumps(func_args, ensure_ascii=False)})")
+                    
+                    try:
+                        if func_name == "list_tables":
+                            result = await list_tables(session, func_args.get("project", PROJECT_ID))
+                            func_result = json.dumps({"tables": result}, ensure_ascii=False)
+                            
+                        elif func_name == "describe_table":
+                            result = await describe_table(
+                                session,
+                                func_args.get("project", PROJECT_ID),
+                                func_args.get("dataset", DEFAULT_DATASET),
+                                func_args["table"]
+                            )
+                            func_result = json.dumps({"columns": result}, ensure_ascii=False)
+                            
+                        elif func_name == "execute_query":
+                            result = await execute_query(
+                                session,
+                                func_args.get("project", PROJECT_ID),
+                                func_args.get("location", LOCATION),
+                                func_args["query"]
+                            )
+                            result_data = result
+                            steps.append(f"📊 Query returned {len(result)} rows")
+                            
+                            # If data is large, return summary to avoid token limit
+                            if len(result) > 100:
+                                summary = {
+                                    "row_count": len(result),
+                                    "columns": list(result[0].keys()) if result else [],
+                                    "sample_rows": result[:5],
+                                    "message": f"Large dataset with {len(result)} rows. Data stored for analysis."
+                                }
+                                func_result = json.dumps(summary, ensure_ascii=False, cls=DateTimeEncoder)
+                            else:
+                                func_result = json.dumps({"rows": result}, ensure_ascii=False, cls=DateTimeEncoder)
+                        else:
+                            func_result = json.dumps({"error": "Unknown function"})
+                            
+                    except Exception as e:
+                        error_msg = f"Error executing {func_name}: {str(e)}"
+                        steps.append(f"❌ {error_msg}")
+                        func_result = json.dumps({"error": error_msg}, ensure_ascii=False)
+                    
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": func_result
+                    })
+            
+            return {
+                "answer": "Maximum iterations reached.",
+                "steps": steps,
+                "data": result_data,
+                "charts": result_charts  # 配列で返す
+            }
 
 async def run_agent_streaming(user_question: str, conversation_history: List[Dict[str, str]], msg_queue: queue.Queue, 
                               api_key: str = None, project_id: str = None, dataset_id: str = None, 
-                              service_account_json: str = None) -> Dict[str, Any]:
-    """Main agent logic with MCP and OpenAI - with streaming progress"""
+                              service_account_json: str = None, project_db_id: int = None, user_id: int = None,
+                              provider: str = 'openai', gemini_api_key: str = None) -> Dict[str, Any]:
+    """Main agent logic with MCP and OpenAI/Gemini - with streaming progress"""
     # Use provided parameters or fall back to global variables
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
     dataset_id = dataset_id or DEFAULT_DATASET
     service_account_json = service_account_json or GCP_SA_JSON
+    
+    # Load project memories if project_db_id is provided
+    project_memories = []
+    if project_db_id and user_id:
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute('''
+                SELECT memory_key, memory_value, updated_at
+                FROM project_memories
+                WHERE project_id = %s AND user_id = %s
+                ORDER BY updated_at DESC
+            ''', (project_db_id, user_id))
+            project_memories = cur.fetchall()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Warning: Failed to load project memories: {e}")
     
     env = os.environ.copy()
     if service_account_json:
@@ -930,13 +1175,20 @@ async def run_agent_streaming(user_question: str, conversation_history: List[Dic
         
         client = OpenAI(api_key=api_key)
         
+        # Build memory section if memories exist
+        memory_section = ""
+        if project_memories:
+            memory_section = "\n\n## PROJECT MEMORY\nThe following information has been saved across all chat sessions for this project. Use this context to provide more relevant and personalized analysis:\n\n"
+            for mem in project_memories:
+                memory_section += f"### {mem['memory_key']}\n{mem['memory_value']}\n\n"
+        
         messages = [
             {"role": "system", "content": f"""You are an expert BigQuery data analyst assistant with deep knowledge of SQL optimization and data analysis.
 
 ## ENVIRONMENT
 - BigQuery Project: {project_id}
 - Default Dataset: {dataset_id}
-
+{memory_section}
 ## STEP-BY-STEP REASONING FRAMEWORK
 Follow this systematic approach for every user query:
 
@@ -1087,167 +1339,364 @@ Think step-by-step and show your reasoning process."""}
         messages.extend(conversation_history)
         messages.append({"role": "user", "content": user_question})
         
-        tools = build_openai_tools_schema()
-        
-        for iteration in range(10):
-            msg_queue.put({"type": "thinking", "message": "次のアクションを考えています..."})
+        # Provider-based implementation
+        if provider == 'gemini':
+            # ===== GEMINI API IMPLEMENTATION (STREAMING) =====
+            genai.configure(api_key=gemini_api_key)
+            gemini_tools = build_gemini_tools_schema()
+            model = genai.GenerativeModel(
+                model_name='gemini-2.5-pro',
+                tools=gemini_tools,
+                system_instruction=messages[0]["content"]
+            )
             
-            # gpt-5の場合は専用パラメーターを使用
-            api_params = {
-                "model": OPENAI_MODEL,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto",
-                "stream": True
-            }
+            # Convert conversation history to Gemini format
+            gemini_contents = []
+            for msg in conversation_history:
+                if msg["role"] == "user":
+                    gemini_contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
+                elif msg["role"] == "assistant":
+                    gemini_contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
             
-            # gpt-5の場合は reasoning_effort を追加
-            if OPENAI_MODEL.startswith("gpt-5"):
-                api_params["reasoning_effort"] = "high"  # 深い推論を実行
+            # Add current question
+            gemini_contents.append({"role": "user", "parts": [{"text": user_question}]})
             
-            # GPT-5でストリーミングエラーが発生する場合は非ストリーミングにフォールバック
-            try:
-                response = client.chat.completions.create(**api_params)
-            except Exception as e:
-                if "stream" in str(e).lower() and OPENAI_MODEL.startswith("gpt-5"):
-                    # ストリーミングなしで再試行
-                    msg_queue.put({"type": "info", "message": "GPT-5: 非ストリーミングモードで実行中..."})
-                    api_params["stream"] = False
-                    response_obj = client.chat.completions.create(**api_params)
+            # Main iteration loop
+            for iteration in range(10):
+                msg_queue.put({"type": "thinking", "message": "次のアクションを考えています..."})
+                
+                try:
+                    # Generate response
+                    response = model.generate_content(gemini_contents)
                     
-                    # 非ストリーミングレスポンスをストリーミング形式に変換
-                    assistant_message = response_obj.choices[0].message
-                    if assistant_message.content:
-                        for char in assistant_message.content:
-                            msg_queue.put({"type": "assistant_text", "text": char})
-                    
-                    # メッセージを構築してツール呼び出しを処理
-                    messages.append(assistant_message.model_dump())
-                    
-                    if not assistant_message.tool_calls:
+                    if not response.candidates or not response.candidates[0].content.parts:
                         return {
-                            "answer": assistant_message.content,
+                            "answer": "Geminiからレスポンスがありませんでした",
                             "steps": steps,
                             "data": result_data,
-                            "charts": result_charts  # 配列で返す
+                            "charts": result_charts
                         }
                     
-                    # ツール呼び出し処理（既存のロジックと同じ）
-                    for tool_call in assistant_message.tool_calls:
-                        func_name = tool_call.function.name
-                        func_args = json.loads(tool_call.function.arguments)
-                        
-                        steps.append(f"🔧 {func_name}({json.dumps(func_args, ensure_ascii=False)})")
-                        msg_queue.put({"type": "tool_call", "name": func_name, "args": func_args})
-                        
-                        try:
-                            if func_name == "list_tables":
-                                msg_queue.put({"type": "tool_start", "tool": "list_tables", "message": "テーブル一覧を取得中..."})
-                                result = await list_tables(session, func_args.get("project", PROJECT_ID))
-                                func_result = json.dumps({"tables": result}, ensure_ascii=False)
-                                msg_queue.put({"type": "tool_done", "tool": "list_tables", "message": f"{len(result)}個のテーブルを発見しました"})
-                                
-                            elif func_name == "describe_table":
-                                # GPT-5とGPT-4で異なるパラメータ名を使う可能性があるため両方をチェック
-                                table_name = func_args.get("table") or func_args.get("table_name")
-                                if not table_name:
-                                    raise ValueError(f"Missing required parameter: 'table'. Received: {func_args}")
-                                msg_queue.put({"type": "tool_start", "tool": "describe_table", "message": f"テーブル '{table_name}' のスキーマを取得中..."})
-                                result = await describe_table(
-                                    session,
-                                    func_args.get("project", PROJECT_ID),
-                                    func_args.get("dataset", DEFAULT_DATASET),
-                                    table_name
-                                )
-                                func_result = json.dumps({"columns": result}, ensure_ascii=False)
-                                msg_queue.put({"type": "tool_done", "tool": "describe_table", "message": f"{len(result)}個のカラムを発見しました"})
-                                
-                            elif func_name == "execute_query":
-                                query = func_args.get("query") or func_args.get("sql")
-                                if not query:
-                                    raise ValueError(f"Missing required parameter: 'query'. Received: {func_args}")
-                                msg_queue.put({"type": "tool_start", "tool": "execute_query", "message": f"クエリを実行中...", "query": query})
-                                result = await execute_query(
-                                    session,
-                                    func_args.get("project", PROJECT_ID),
-                                    func_args.get("location", LOCATION),
-                                    query
-                                )
-                                result_data = result
-                                msg = f"📊 {len(result)}行のデータを取得しました"
-                                steps.append(msg)
-                                msg_queue.put({"type": "tool_done", "tool": "execute_query", "message": msg})
-                                
-                                # If data is large, return summary to avoid token limit
-                                if len(result) > 100:
-                                    summary = {
-                                        "row_count": len(result),
-                                        "columns": list(result[0].keys()) if result else [],
-                                        "sample_rows": result[:5],
-                                        "message": f"Large dataset with {len(result)} rows. Data stored for analysis."
+                    response_parts = response.candidates[0].content.parts
+                    
+                    # Check for function calls
+                    has_function_call = False
+                    for part in response_parts:
+                        if hasattr(part, 'function_call') and part.function_call:
+                            has_function_call = True
+                            function_call = part.function_call
+                            func_name = function_call.name
+                            func_args = dict(function_call.args)
+                            
+                            steps.append(f"🔧 {func_name}({json.dumps(func_args, ensure_ascii=False)})")
+                            msg_queue.put({"type": "tool_call", "name": func_name, "args": func_args})
+                            
+                            # Execute tool
+                            try:
+                                if func_name == "list_tables":
+                                    msg_queue.put({"type": "tool_start", "tool": "list_tables", "message": "テーブル一覧を取得中..."})
+                                    result = await list_tables(session, func_args.get("project", project_id))
+                                    func_result = {"tables": result}
+                                    msg_queue.put({"type": "tool_done", "tool": "list_tables", "message": f"{len(result)}個のテーブルを発見しました"})
+                                    
+                                elif func_name == "describe_table":
+                                    table_name = func_args.get("table") or func_args.get("table_name")
+                                    if not table_name:
+                                        raise ValueError(f"Missing required parameter: 'table'")
+                                    msg_queue.put({"type": "tool_start", "tool": "describe_table", "message": f"テーブル '{table_name}' のスキーマを取得中..."})
+                                    result = await describe_table(
+                                        session,
+                                        func_args.get("project", project_id),
+                                        func_args.get("dataset", dataset_id),
+                                        table_name
+                                    )
+                                    func_result = {"columns": result}
+                                    msg_queue.put({"type": "tool_done", "tool": "describe_table", "message": f"{len(result)}個のカラムを発見しました"})
+                                    
+                                elif func_name == "execute_query":
+                                    query = func_args.get("query") or func_args.get("sql")
+                                    if not query:
+                                        raise ValueError(f"Missing required parameter: 'query'")
+                                    msg_queue.put({"type": "tool_start", "tool": "execute_query", "message": "クエリを実行中...", "query": query})
+                                    result = await execute_query(
+                                        session,
+                                        func_args.get("project", project_id),
+                                        func_args.get("location", LOCATION),
+                                        query
+                                    )
+                                    result_data = result
+                                    msg = f"📊 {len(result)}行のデータを取得しました"
+                                    steps.append(msg)
+                                    msg_queue.put({"type": "tool_done", "tool": "execute_query", "message": msg})
+                                    
+                                    if len(result) > 100:
+                                        func_result = {
+                                            "row_count": len(result),
+                                            "columns": list(result[0].keys()) if result else [],
+                                            "sample_rows": result[:5],
+                                            "message": f"Large dataset with {len(result)} rows."
+                                        }
+                                    else:
+                                        func_result = {"rows": result}
+                                        
+                                elif func_name == "suggest_chart":
+                                    msg_queue.put({"type": "tool_start", "tool": "suggest_chart", "message": "グラフ設定を提案中..."})
+                                    chart_config = {
+                                        "chart_type": func_args.get("chart_type", "bar"),
+                                        "x_axis": func_args.get("x_axis"),
+                                        "y_axis": func_args.get("y_axis"),
+                                        "title": func_args.get("title", "")
                                     }
-                                    func_result = json.dumps(summary, ensure_ascii=False, cls=DateTimeEncoder)
+                                    result_charts.append(chart_config)
+                                    func_result = {"chart": chart_config}
+                                    chart_type_ja = {
+                                        "bar": "棒グラフ",
+                                        "line": "折れ線グラフ",
+                                        "pie": "円グラフ",
+                                        "doughnut": "ドーナツグラフ",
+                                        "scatter": "散布図",
+                                        "none": "グラフなし"
+                                    }.get(chart_config["chart_type"], chart_config["chart_type"])
+                                    msg = f"📈 {chart_type_ja}を提案しました"
+                                    steps.append(msg)
+                                    msg_queue.put({"type": "tool_done", "tool": "suggest_chart", "message": msg})
+                                    
+                                elif func_name == "execute_python":
+                                    msg_queue.put({"type": "tool_start", "tool": "execute_python", "message": "Pythonコードを実行中..."})
+                                    code = func_args.get("code")
+                                    df_dict = {}
+                                    if result_data:
+                                        df_dict['df'] = pd.DataFrame(result_data)
+                                    python_result = execute_python_code(code, df_dict, timeout=30)
+                                    func_result = {
+                                        "output": python_result.get('output', ''),
+                                        "result": python_result.get('result'),
+                                        "plots_count": len(python_result.get('plots', []))
+                                    }
+                                    msg_queue.put({"type": "tool_done", "tool": "execute_python", "message": "Python実行完了"})
+                                    steps.append(f"🐍 Python実行完了")
+                                    
                                 else:
-                                    func_result = json.dumps({"result": result}, ensure_ascii=False, cls=DateTimeEncoder)
-                                
-                            elif func_name == "suggest_chart":
-                                msg_queue.put({"type": "tool_start", "tool": "suggest_chart", "message": "グラフ設定を提案中..."})
-                                chart_config = {
-                                    "chart_type": func_args.get("chart_type", "bar"),
-                                    "x_axis": func_args.get("x_axis"),
-                                    "y_axis": func_args.get("y_axis"),
-                                    "title": func_args.get("title", "")
+                                    func_result = {"error": "Unknown function"}
+                                    
+                            except Exception as e:
+                                error_msg = str(e)
+                                error_details = {
+                                    "error": error_msg,
+                                    "function": func_name,
+                                    "arguments": func_args
                                 }
-                                result_charts.append(chart_config)  # 配列に追加
-                                func_result = json.dumps({"chart": chart_config}, ensure_ascii=False)
-                                chart_type_ja = {
-                                    "bar": "棒グラフ",
-                                    "line": "折れ線グラフ",
-                                    "pie": "円グラフ",
-                                    "doughnut": "ドーナツグラフ",
-                                    "scatter": "散布図",
-                                    "none": "グラフなし"
-                                }.get(chart_config["chart_type"], chart_config["chart_type"])
-                                msg = f"📈 {chart_type_ja}を提案しました"
-                                steps.append(msg)
-                                msg_queue.put({"type": "tool_done", "tool": "suggest_chart", "message": msg})
-                                
-                            else:
-                                func_result = json.dumps({"error": "Unknown function"})
-                                
-                        except Exception as e:
-                            error_msg = str(e)
-                            error_details = {
-                                "error": error_msg,
-                                "function": func_name,
-                                "arguments": func_args
-                            }
+                                steps.append(f"❌ {func_name} エラー: {error_msg}")
+                                msg_queue.put({"type": "error", "message": f"エラー: {error_msg}"})
+                                func_result = error_details
                             
-                            # エラーの種類に応じた修正提案を追加
-                            if func_name == "execute_query":
-                                if "column" in error_msg.lower() or "field" in error_msg.lower():
-                                    error_details["hint"] = "Column name error detected. Use describe_table to get exact column names (case-sensitive)."
-                                elif "table" in error_msg.lower():
-                                    error_details["hint"] = "Table reference error. Use backticks: `project.dataset.table` or `dataset.table`"
-                                elif "type" in error_msg.lower() or "cast" in error_msg.lower():
-                                    error_details["hint"] = "Data type error. Use SAFE_CAST(column AS FLOAT64) for type conversion."
-                                elif "syntax" in error_msg.lower():
-                                    error_details["hint"] = "SQL syntax error. Check BigQuery syntax: use backticks for tables, proper GROUP BY, etc."
-                                else:
-                                    error_details["hint"] = "Query execution failed. Review the error message and check: 1) Column names (case-sensitive), 2) Table references (use backticks), 3) Data types, 4) BigQuery syntax."
-                            
-                            steps.append(f"❌ {func_name} エラー: {error_msg}")
-                            msg_queue.put({"type": "error", "message": f"{func_name} でエラーが発生しました: {error_msg}"})
-                            func_result = json.dumps(error_details, ensure_ascii=False)
+                            # Add function call and response to conversation
+                            gemini_contents.append({
+                                "role": "model",
+                                "parts": [{"function_call": {"name": func_name, "args": func_args}}]
+                            })
+                            gemini_contents.append({
+                                "role": "user",
+                                "parts": [{"function_response": {"name": func_name, "response": func_result}}]
+                            })
+                    
+                    if not has_function_call:
+                        # Final answer - stream it character by character
+                        answer_text = ""
+                        for part in response_parts:
+                            if hasattr(part, 'text'):
+                                for char in part.text:
+                                    msg_queue.put({"type": "assistant_text", "text": char})
+                                answer_text += part.text
+                        return {
+                            "answer": answer_text,
+                            "steps": steps,
+                            "data": result_data,
+                            "charts": result_charts
+                        }
                         
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": func_result
-                        })
-                    continue  # 次のイテレーションへ
-                else:
-                    raise  # その他のエラーは再スロー
+                except Exception as e:
+                    error_msg = f"Gemini API error: {str(e)}"
+                    print(f"ERROR: {error_msg}")
+                    msg_queue.put({"type": "error", "message": f"エラーが発生しました: {error_msg}"})
+                    return {
+                        "answer": f"エラーが発生しました: {error_msg}",
+                        "steps": steps,
+                        "data": result_data,
+                        "charts": result_charts
+                    }
+            
+            return {
+                "answer": "最大反復回数に達しました",
+                "steps": steps,
+                "data": result_data,
+                "charts": result_charts
+            }
+        
+        else:  # provider == 'openai'
+            # ===== OPENAI API IMPLEMENTATION (STREAMING) =====
+            client = OpenAI(api_key=api_key)
+            tools = build_openai_tools_schema()
+            
+            for iteration in range(10):
+                msg_queue.put({"type": "thinking", "message": "次のアクションを考えています..."})
+                
+                # gpt-5の場合は専用パラメーターを使用
+                api_params = {
+                    "model": OPENAI_MODEL,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                    "stream": True
+                }
+                
+                # gpt-5の場合は reasoning_effort を追加
+                if OPENAI_MODEL.startswith("gpt-5"):
+                    api_params["reasoning_effort"] = "high"  # 深い推論を実行
+                
+                # GPT-5でストリーミングエラーが発生する場合は非ストリーミングにフォールバック
+                try:
+                    response = client.chat.completions.create(**api_params)
+                except Exception as e:
+                    if "stream" in str(e).lower() and OPENAI_MODEL.startswith("gpt-5"):
+                        # ストリーミングなしで再試行
+                        msg_queue.put({"type": "info", "message": "GPT-5: 非ストリーミングモードで実行中..."})
+                        api_params["stream"] = False
+                        response_obj = client.chat.completions.create(**api_params)
+                        
+                        # 非ストリーミングレスポンスをストリーミング形式に変換
+                        assistant_message = response_obj.choices[0].message
+                        if assistant_message.content:
+                            for char in assistant_message.content:
+                                msg_queue.put({"type": "assistant_text", "text": char})
+                        
+                        # メッセージを構築してツール呼び出しを処理
+                        messages.append(assistant_message.model_dump())
+                        
+                        if not assistant_message.tool_calls:
+                            return {
+                                "answer": assistant_message.content,
+                                "steps": steps,
+                                "data": result_data,
+                                "charts": result_charts  # 配列で返す
+                            }
+                        
+                        # ツール呼び出し処理（既存のロジックと同じ）
+                        for tool_call in assistant_message.tool_calls:
+                            func_name = tool_call.function.name
+                            func_args = json.loads(tool_call.function.arguments)
+                            
+                            steps.append(f"🔧 {func_name}({json.dumps(func_args, ensure_ascii=False)})")
+                            msg_queue.put({"type": "tool_call", "name": func_name, "args": func_args})
+                            
+                            try:
+                                if func_name == "list_tables":
+                                    msg_queue.put({"type": "tool_start", "tool": "list_tables", "message": "テーブル一覧を取得中..."})
+                                    result = await list_tables(session, func_args.get("project", PROJECT_ID))
+                                    func_result = json.dumps({"tables": result}, ensure_ascii=False)
+                                    msg_queue.put({"type": "tool_done", "tool": "list_tables", "message": f"{len(result)}個のテーブルを発見しました"})
+                                    
+                                elif func_name == "describe_table":
+                                    # GPT-5とGPT-4で異なるパラメータ名を使う可能性があるため両方をチェック
+                                    table_name = func_args.get("table") or func_args.get("table_name")
+                                    if not table_name:
+                                        raise ValueError(f"Missing required parameter: 'table'. Received: {func_args}")
+                                    msg_queue.put({"type": "tool_start", "tool": "describe_table", "message": f"テーブル '{table_name}' のスキーマを取得中..."})
+                                    result = await describe_table(
+                                        session,
+                                        func_args.get("project", PROJECT_ID),
+                                        func_args.get("dataset", DEFAULT_DATASET),
+                                        table_name
+                                    )
+                                    func_result = json.dumps({"columns": result}, ensure_ascii=False)
+                                    msg_queue.put({"type": "tool_done", "tool": "describe_table", "message": f"{len(result)}個のカラムを発見しました"})
+                                    
+                                elif func_name == "execute_query":
+                                    query = func_args.get("query") or func_args.get("sql")
+                                    if not query:
+                                        raise ValueError(f"Missing required parameter: 'query'. Received: {func_args}")
+                                    msg_queue.put({"type": "tool_start", "tool": "execute_query", "message": f"クエリを実行中...", "query": query})
+                                    result = await execute_query(
+                                        session,
+                                        func_args.get("project", PROJECT_ID),
+                                        func_args.get("location", LOCATION),
+                                        query
+                                    )
+                                    result_data = result
+                                    msg = f"📊 {len(result)}行のデータを取得しました"
+                                    steps.append(msg)
+                                    msg_queue.put({"type": "tool_done", "tool": "execute_query", "message": msg})
+                                    
+                                    # If data is large, return summary to avoid token limit
+                                    if len(result) > 100:
+                                        summary = {
+                                            "row_count": len(result),
+                                            "columns": list(result[0].keys()) if result else [],
+                                            "sample_rows": result[:5],
+                                            "message": f"Large dataset with {len(result)} rows. Data stored for analysis."
+                                        }
+                                        func_result = json.dumps(summary, ensure_ascii=False, cls=DateTimeEncoder)
+                                    else:
+                                        func_result = json.dumps({"result": result}, ensure_ascii=False, cls=DateTimeEncoder)
+                                    
+                                elif func_name == "suggest_chart":
+                                    msg_queue.put({"type": "tool_start", "tool": "suggest_chart", "message": "グラフ設定を提案中..."})
+                                    chart_config = {
+                                        "chart_type": func_args.get("chart_type", "bar"),
+                                        "x_axis": func_args.get("x_axis"),
+                                        "y_axis": func_args.get("y_axis"),
+                                        "title": func_args.get("title", "")
+                                    }
+                                    result_charts.append(chart_config)  # 配列に追加
+                                    func_result = json.dumps({"chart": chart_config}, ensure_ascii=False)
+                                    chart_type_ja = {
+                                        "bar": "棒グラフ",
+                                        "line": "折れ線グラフ",
+                                        "pie": "円グラフ",
+                                        "doughnut": "ドーナツグラフ",
+                                        "scatter": "散布図",
+                                        "none": "グラフなし"
+                                    }.get(chart_config["chart_type"], chart_config["chart_type"])
+                                    msg = f"📈 {chart_type_ja}を提案しました"
+                                    steps.append(msg)
+                                    msg_queue.put({"type": "tool_done", "tool": "suggest_chart", "message": msg})
+                                    
+                                else:
+                                    func_result = json.dumps({"error": "Unknown function"})
+                                    
+                            except Exception as e:
+                                error_msg = str(e)
+                                error_details = {
+                                    "error": error_msg,
+                                    "function": func_name,
+                                    "arguments": func_args
+                                }
+                                
+                                # エラーの種類に応じた修正提案を追加
+                                if func_name == "execute_query":
+                                    if "column" in error_msg.lower() or "field" in error_msg.lower():
+                                        error_details["hint"] = "Column name error detected. Use describe_table to get exact column names (case-sensitive)."
+                                    elif "table" in error_msg.lower():
+                                        error_details["hint"] = "Table reference error. Use backticks: `project.dataset.table` or `dataset.table`"
+                                    elif "type" in error_msg.lower() or "cast" in error_msg.lower():
+                                        error_details["hint"] = "Data type error. Use SAFE_CAST(column AS FLOAT64) for type conversion."
+                                    elif "syntax" in error_msg.lower():
+                                        error_details["hint"] = "SQL syntax error. Check BigQuery syntax: use backticks for tables, proper GROUP BY, etc."
+                                    else:
+                                        error_details["hint"] = "Query execution failed. Review the error message and check: 1) Column names (case-sensitive), 2) Table references (use backticks), 3) Data types, 4) BigQuery syntax."
+                                
+                                steps.append(f"❌ {func_name} エラー: {error_msg}")
+                                msg_queue.put({"type": "error", "message": f"{func_name} でエラーが発生しました: {error_msg}"})
+                                func_result = json.dumps(error_details, ensure_ascii=False)
+                            
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": func_result
+                            })
+                        continue  # 次のイテレーションへ
+                    else:
+                        raise  # その他のエラーは再スロー
             
             # ストリーミングレスポンスを収集
             full_content = ""
@@ -1426,6 +1875,7 @@ Think step-by-step and show your reasoning process."""}
                 messages.append(assistant_message_dict)
                 return {
                     "answer": full_content,
+                    "reasoning": reasoning_content,
                     "steps": steps,
                     "data": result_data,
                     "charts": result_charts  # 配列で返す
@@ -1433,6 +1883,7 @@ Think step-by-step and show your reasoning process."""}
         
         return {
             "answer": "Maximum iterations reached.",
+            "reasoning": "",
             "steps": steps,
             "data": result_data,
             "charts": result_charts  # 配列で返す
@@ -1440,8 +1891,12 @@ Think step-by-step and show your reasoning process."""}
 
 async def run_agent_with_steps(task_id: str, user_question: str, conversation_history: List[Dict[str, str]], 
                               api_key: str = None, project_id: str = None, dataset_id: str = None, 
-                              service_account_json: str = None) -> Dict[str, Any]:
-    """Main agent logic with progress tracking via task_id"""
+                              service_account_json: str = None, project_db_id: int = None, user_id: int = None,
+                              provider: str = 'openai', gemini_api_key: str = None) -> Dict[str, Any]:
+    """Main agent logic with progress tracking via task_id - supports OpenAI and Gemini"""
+    import time
+    
+    start_time = time.time()
     
     def add_step(message: str):
         """Helper to add step to task"""
@@ -1449,10 +1904,41 @@ async def run_agent_with_steps(task_id: str, user_question: str, conversation_hi
             if task_id in chat_tasks:
                 chat_tasks[task_id]['steps'].append(message)
     
+    def add_reasoning(text: str):
+        """Helper to add reasoning content to task"""
+        with task_lock:
+            if task_id in chat_tasks:
+                chat_tasks[task_id]['reasoning'] += text
+    
+    def is_cancelled():
+        """Check if task has been cancelled"""
+        with task_lock:
+            if task_id in chat_tasks:
+                return chat_tasks[task_id].get('cancelled', False)
+        return False
+    
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
     dataset_id = dataset_id or DEFAULT_DATASET
     service_account_json = service_account_json or GCP_SA_JSON
+    
+    # Load project memories if project_db_id is provided
+    project_memories = []
+    if project_db_id and user_id:
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute('''
+                SELECT memory_key, memory_value, updated_at
+                FROM project_memories
+                WHERE project_id = %s AND user_id = %s
+                ORDER BY updated_at DESC
+            ''', (project_db_id, user_id))
+            project_memories = cur.fetchall()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Warning: Failed to load project memories: {e}")
     
     env = os.environ.copy()
     if service_account_json:
@@ -1479,13 +1965,20 @@ async def run_agent_with_steps(task_id: str, user_question: str, conversation_hi
         
         client = OpenAI(api_key=api_key)
         
+        # Build memory section if memories exist
+        memory_section = ""
+        if project_memories:
+            memory_section = "\n\n## PROJECT MEMORY\nThe following information has been saved across all chat sessions for this project. Use this context to provide more relevant and personalized analysis:\n\n"
+            for mem in project_memories:
+                memory_section += f"### {mem['memory_key']}\n{mem['memory_value']}\n\n"
+        
         messages = [
             {"role": "system", "content": f"""You are an expert BigQuery data analyst assistant with deep knowledge of SQL optimization and data analysis.
 
 ## ENVIRONMENT
 - BigQuery Project: {project_id}
 - Default Dataset: {dataset_id}
-
+{memory_section}
 ## STEP-BY-STEP REASONING FRAMEWORK
 Follow this systematic approach for every user query:
 
@@ -1636,211 +2129,476 @@ Think step-by-step and show your reasoning process."""}
         messages.extend(conversation_history)
         messages.append({"role": "user", "content": user_question})
         
-        tools = build_openai_tools_schema()
-        
-        for iteration in range(10):
-            add_step("🤔 次のアクションを考えています...")
+        # Provider-based implementation
+        if provider == 'gemini':
+            # ===== GEMINI API IMPLEMENTATION (WITH TASK TRACKING) =====
+            genai.configure(api_key=gemini_api_key)
+            gemini_tools = build_gemini_tools_schema()
+            model = genai.GenerativeModel(
+                model_name='gemini-2.5-pro',
+                tools=gemini_tools,
+                system_instruction=messages[0]["content"]
+            )
             
-            api_params = {
-                "model": OPENAI_MODEL,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto"
-            }
+            # Convert conversation history to Gemini format
+            gemini_contents = []
+            for msg in conversation_history:
+                if msg["role"] == "user":
+                    gemini_contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
+                elif msg["role"] == "assistant":
+                    gemini_contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
             
-            if OPENAI_MODEL.startswith("gpt-5"):
-                api_params["reasoning_effort"] = "high"
+            # Add current question
+            gemini_contents.append({"role": "user", "parts": [{"text": user_question}]})
             
-            response = client.chat.completions.create(**api_params)
-            assistant_message = response.choices[0].message
-            
-            assistant_message_dict = {
-                "role": "assistant", 
-                "content": assistant_message.content or None
-            }
-            
-            if assistant_message.tool_calls:
-                assistant_message_dict["tool_calls"] = [tc.model_dump() for tc in assistant_message.tool_calls]
-                messages.append(assistant_message_dict)
+            # Main iteration loop
+            for iteration in range(10):
+                # Check for cancellation
+                if is_cancelled():
+                    return {
+                        "answer": "処理がキャンセルされました",
+                        "data": result_data,
+                        "charts": result_charts,
+                        "python_results": python_results,
+                        "cancelled": True
+                    }
                 
-                for tool_call in assistant_message.tool_calls:
-                    func_name = tool_call.function.name
-                    func_args = json.loads(tool_call.function.arguments)
+                add_step("🤔 次のアクションを考えています...")
+                
+                try:
+                    # Generate response
+                    response = model.generate_content(gemini_contents)
                     
-                    try:
-                        if func_name == "list_tables":
-                            add_step("📋 テーブル一覧を取得中...")
-                            result = await list_tables(session, func_args.get("project", PROJECT_ID))
-                            func_result = json.dumps({"tables": result}, ensure_ascii=False)
-                            add_step(f"✅ {len(result)}個のテーブルを発見しました")
-                            
-                        elif func_name == "describe_table":
-                            table_name = func_args.get("table") or func_args.get("table_name")
-                            if not table_name:
-                                raise ValueError(f"Missing required parameter: 'table'")
-                            add_step(f"🔍 テーブル '{table_name}' のスキーマを取得中...")
-                            result = await describe_table(
-                                session,
-                                func_args.get("project", PROJECT_ID),
-                                func_args.get("dataset", DEFAULT_DATASET),
-                                table_name
-                            )
-                            func_result = json.dumps({"columns": result}, ensure_ascii=False)
-                            add_step(f"✅ {len(result)}個のカラムを発見しました")
-                            
-                        elif func_name == "execute_query":
-                            query = func_args.get("query") or func_args.get("sql")
-                            if not query:
-                                raise ValueError(f"Missing required parameter: 'query'")
-                            add_step("⚡ クエリを実行中...")
-                            result = await execute_query(
-                                session,
-                                func_args.get("project", PROJECT_ID),
-                                func_args.get("location", LOCATION),
-                                query
-                            )
-                            result_data = result
-                            
-                            # Convert to DataFrame for Python execution
-                            if result:
-                                latest_dataframe = pd.DataFrame(result)
-                                add_step(f"📊 {len(result)}行のデータを取得しました（Python処理可能）")
-                                
-                                # If data is large, return summary to avoid token limit
-                                if len(result) > 100:
-                                    summary = {
-                                        "row_count": len(result),
-                                        "columns": list(result[0].keys()) if result else [],
-                                        "sample_rows": result[:5],
-                                        "message": f"Large dataset with {len(result)} rows. Full data available in Python as 'df'. Use execute_python for analysis."
-                                    }
-                                    func_result = json.dumps(summary, ensure_ascii=False, cls=DateTimeEncoder)
-                                else:
-                                    func_result = json.dumps({"rows": result}, ensure_ascii=False, cls=DateTimeEncoder)
-                            else:
-                                latest_dataframe = None
-                                add_step("📊 0行のデータを取得しました")
-                                func_result = json.dumps({"rows": []}, ensure_ascii=False)
-                            
-                        elif func_name == "execute_python":
-                            code = func_args.get("code")
-                            if not code:
-                                raise ValueError(f"Missing required parameter: 'code'")
-                            
-                            add_step("🐍 Pythonコードを実行中...")
-                            
-                            # Prepare DataFrame dict
-                            df_dict = {}
-                            if latest_dataframe is not None:
-                                df_dict['df'] = latest_dataframe
-                            
-                            # Execute Python code
-                            python_result = execute_python_code(code, df_dict, timeout=30)
-                            
-                            # Store result
-                            python_results.append(python_result)
-                            
-                            # Build result message
-                            result_parts = []
-                            if python_result.get('output'):
-                                result_parts.append(f"出力:\n{python_result['output']}")
-                            if python_result.get('result'):
-                                result_parts.append(f"結果: {python_result['result']}")
-                            if python_result.get('plots'):
-                                result_parts.append(f"{len(python_result['plots'])}個のグラフを生成しました")
-                            
-                            func_result = json.dumps({
-                                "output": python_result.get('output', ''),
-                                "result": python_result.get('result'),
-                                "plots_count": len(python_result.get('plots', []))
-                            }, ensure_ascii=False)
-                            
-                            add_step(f"✅ Python実行完了: {', '.join(result_parts) if result_parts else 'エラーなし'}")
-                            
-                        elif func_name == "suggest_chart":
-                            add_step("📈 グラフ設定を提案中...")
-                            chart_config = {
-                                "chart_type": func_args.get("chart_type", "bar"),
-                                "x_axis": func_args.get("x_axis"),
-                                "y_axis": func_args.get("y_axis"),
-                                "title": func_args.get("title", "")
-                            }
-                            result_charts.append(chart_config)
-                            func_result = json.dumps({"chart": chart_config}, ensure_ascii=False)
-                            chart_type_ja = {
-                                "bar": "棒グラフ",
-                                "line": "折れ線グラフ",
-                                "pie": "円グラフ",
-                                "doughnut": "ドーナツグラフ",
-                                "scatter": "散布図",
-                                "none": "グラフなし"
-                            }.get(chart_config["chart_type"], chart_config["chart_type"])
-                            add_step(f"✅ {chart_type_ja}を提案しました")
-                            
-                        else:
-                            func_result = json.dumps({"error": "Unknown function"})
-                            
-                    except Exception as e:
-                        error_msg = str(e)
-                        error_details = {
-                            "error": error_msg,
-                            "function": func_name,
-                            "arguments": func_args
+                    if not response.candidates or not response.candidates[0].content.parts:
+                        add_step("❌ Geminiからレスポンスがありませんでした")
+                        final_result = {
+                            "answer": "Geminiからレスポンスがありませんでした",
+                            "data": result_data,
+                            "charts": result_charts,
+                            "python_results": python_results
                         }
-                        
-                        if func_name == "execute_query":
-                            if "column" in error_msg.lower() or "field" in error_msg.lower():
-                                error_details["hint"] = "Column name error detected. Use describe_table to get exact column names (case-sensitive)."
-                            elif "table" in error_msg.lower():
-                                error_details["hint"] = "Table reference error. Use backticks: `project.dataset.table` or `dataset.table`"
-                            elif "type" in error_msg.lower() or "cast" in error_msg.lower():
-                                error_details["hint"] = "Data type error. Use SAFE_CAST(column AS FLOAT64) for type conversion."
-                            elif "syntax" in error_msg.lower():
-                                error_details["hint"] = "SQL syntax error. Check BigQuery syntax: use backticks for tables, proper GROUP BY, etc."
-                            else:
-                                error_details["hint"] = "Query execution failed. Review the error message and check: 1) Column names (case-sensitive), 2) Table references (use backticks), 3) Data types, 4) BigQuery syntax."
-                        
-                        add_step(f"❌ {func_name} エラー: {error_msg}")
-                        func_result = json.dumps(error_details, ensure_ascii=False)
+                        set_final_result(final_result)
+                        return final_result
                     
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": func_result
-                    })
-            else:
-                messages.append(assistant_message_dict)
-                add_step("✅ 分析完了")
-                return {
-                    "answer": assistant_message.content,
-                    "steps": steps,
-                    "data": result_data,
-                    "charts": result_charts,
-                    "python_results": python_results
-                }
+                    response_parts = response.candidates[0].content.parts
+                    
+                    # Check for function calls
+                    has_function_call = False
+                    for part in response_parts:
+                        if hasattr(part, 'function_call') and part.function_call:
+                            has_function_call = True
+                            function_call = part.function_call
+                            func_name = function_call.name
+                            func_args = dict(function_call.args)
+                            
+                            try:
+                                if func_name == "list_tables":
+                                    add_step("📋 テーブル一覧を取得中...")
+                                    result = await list_tables(session, func_args.get("project", project_id))
+                                    func_result = {"tables": result}
+                                    add_step(f"✅ {len(result)}個のテーブルを発見しました")
+                                    
+                                elif func_name == "describe_table":
+                                    table_name = func_args.get("table") or func_args.get("table_name")
+                                    if not table_name:
+                                        raise ValueError(f"Missing required parameter: 'table'")
+                                    add_step(f"🔍 テーブル '{table_name}' のスキーマを取得中...")
+                                    result = await describe_table(
+                                        session,
+                                        func_args.get("project", project_id),
+                                        func_args.get("dataset", dataset_id),
+                                        table_name
+                                    )
+                                    func_result = {"columns": result}
+                                    add_step(f"✅ {len(result)}個のカラムを発見しました")
+                                    
+                                elif func_name == "execute_query":
+                                    query = func_args.get("query") or func_args.get("sql")
+                                    if not query:
+                                        raise ValueError(f"Missing required parameter: 'query'")
+                                    add_step("⚡ クエリを実行中...")
+                                    result = await execute_query(
+                                        session,
+                                        func_args.get("project", project_id),
+                                        func_args.get("location", LOCATION),
+                                        query
+                                    )
+                                    result_data = result
+                                    
+                                    if result:
+                                        latest_dataframe = pd.DataFrame(result)
+                                        add_step(f"📊 {len(result)}行のデータを取得しました（Python処理可能）")
+                                        
+                                        if len(result) > 100:
+                                            func_result = {
+                                                "row_count": len(result),
+                                                "columns": list(result[0].keys()),
+                                                "sample_rows": result[:5],
+                                                "message": f"Large dataset with {len(result)} rows. Full data available in Python as 'df'."
+                                            }
+                                        else:
+                                            func_result = {"rows": result}
+                                    else:
+                                        latest_dataframe = None
+                                        add_step("📊 0行のデータを取得しました")
+                                        func_result = {"rows": []}
+                                        
+                                elif func_name == "execute_python":
+                                    code = func_args.get("code")
+                                    if not code:
+                                        raise ValueError(f"Missing required parameter: 'code'")
+                                    
+                                    add_step("🐍 Pythonコードを実行中...")
+                                    
+                                    df_dict = {}
+                                    if latest_dataframe is not None:
+                                        df_dict['df'] = latest_dataframe
+                                    
+                                    python_result = execute_python_code(code, df_dict, timeout=30)
+                                    python_results.append(python_result)
+                                    
+                                    func_result = {
+                                        "output": python_result.get('output', ''),
+                                        "result": python_result.get('result'),
+                                        "plots_count": len(python_result.get('plots', []))
+                                    }
+                                    
+                                    result_parts = []
+                                    if python_result.get('output'):
+                                        result_parts.append(f"出力あり")
+                                    if python_result.get('result'):
+                                        result_parts.append(f"結果あり")
+                                    if python_result.get('plots'):
+                                        result_parts.append(f"{len(python_result['plots'])}個のグラフ")
+                                    add_step(f"✅ Python実行完了: {', '.join(result_parts) if result_parts else 'エラーなし'}")
+                                    
+                                elif func_name == "suggest_chart":
+                                    add_step("📈 グラフ設定を提案中...")
+                                    chart_config = {
+                                        "chart_type": func_args.get("chart_type", "bar"),
+                                        "x_axis": func_args.get("x_axis"),
+                                        "y_axis": func_args.get("y_axis"),
+                                        "title": func_args.get("title", "")
+                                    }
+                                    result_charts.append(chart_config)
+                                    func_result = {"chart": chart_config}
+                                    chart_type_ja = {
+                                        "bar": "棒グラフ",
+                                        "line": "折れ線グラフ",
+                                        "pie": "円グラフ",
+                                        "doughnut": "ドーナツグラフ",
+                                        "scatter": "散布図",
+                                        "none": "グラフなし"
+                                    }.get(chart_config["chart_type"], chart_config["chart_type"])
+                                    add_step(f"✅ {chart_type_ja}を提案しました")
+                                    
+                                else:
+                                    func_result = {"error": "Unknown function"}
+                                    add_step(f"❌ 未知の関数: {func_name}")
+                                    
+                            except Exception as e:
+                                error_msg = str(e)
+                                add_step(f"❌ {func_name} エラー: {error_msg}")
+                                func_result = {
+                                    "error": error_msg,
+                                    "function": func_name,
+                                    "arguments": func_args
+                                }
+                            
+                            # Add function call and response to conversation
+                            gemini_contents.append({
+                                "role": "model",
+                                "parts": [{"function_call": {"name": func_name, "args": func_args}}]
+                            })
+                            gemini_contents.append({
+                                "role": "user",
+                                "parts": [{"function_response": {"name": func_name, "response": func_result}}]
+                            })
+                    
+                    if not has_function_call:
+                        # Final answer
+                        answer_text = ""
+                        for part in response_parts:
+                            if hasattr(part, 'text'):
+                                answer_text += part.text
+                        
+                        add_step("✅ 完了")
+                        final_result = {
+                            "answer": answer_text,
+                            "data": result_data,
+                            "charts": result_charts,
+                            "python_results": python_results
+                        }
+                        return final_result
+                        
+                except Exception as e:
+                    error_msg = f"Gemini API error: {str(e)}"
+                    print(f"ERROR: {error_msg}")
+                    add_step(f"❌ {error_msg}")
+                    final_result = {
+                        "answer": f"エラーが発生しました: {error_msg}",
+                        "data": result_data,
+                        "charts": result_charts,
+                        "python_results": python_results
+                    }
+                    return final_result
+            
+            # Max iterations reached
+            add_step("⚠️ 最大反復回数に達しました")
+            final_result = {
+                "answer": "最大反復回数に達しました",
+                "data": result_data,
+                "charts": result_charts,
+                "python_results": python_results
+            }
+            return final_result
         
-        add_step("⚠️ 最大反復回数に達しました")
-        return {
-            "answer": "Maximum iterations reached.",
-            "steps": steps,
-            "data": result_data,
-            "charts": result_charts,
-            "python_results": python_results
-        }
+        else:  # provider == 'openai'
+            # ===== OPENAI API IMPLEMENTATION (WITH TASK TRACKING) =====
+            client = OpenAI(api_key=api_key)
+            tools = build_openai_tools_schema()
+            
+            for iteration in range(10):
+                # Check for cancellation
+                if is_cancelled():
+                    return {
+                        "answer": "処理がキャンセルされました",
+                        "data": result_data,
+                        "charts": result_charts,
+                        "python_results": python_results,
+                        "cancelled": True
+                    }
+                
+                add_step("🤔 次のアクションを考えています...")
+                
+                api_params = {
+                    "model": OPENAI_MODEL,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "auto"
+                }
+                
+                if OPENAI_MODEL.startswith("gpt-5"):
+                    api_params["reasoning_effort"] = "high"
+                
+                response = client.chat.completions.create(**api_params)
+                assistant_message = response.choices[0].message
+                
+                # GPT-5の推論過程を取得してリアルタイム保存
+                if hasattr(assistant_message, 'reasoning_content') and assistant_message.reasoning_content:
+                    add_reasoning(assistant_message.reasoning_content)
+                
+                assistant_message_dict = {
+                    "role": "assistant", 
+                    "content": assistant_message.content or None
+                }
+                
+                if assistant_message.tool_calls:
+                    assistant_message_dict["tool_calls"] = [tc.model_dump() for tc in assistant_message.tool_calls]
+                    messages.append(assistant_message_dict)
+                    
+                    for tool_call in assistant_message.tool_calls:
+                        func_name = tool_call.function.name
+                        func_args = json.loads(tool_call.function.arguments)
+                        
+                        try:
+                            if func_name == "list_tables":
+                                add_step("📋 テーブル一覧を取得中...")
+                                result = await list_tables(session, func_args.get("project", PROJECT_ID))
+                                func_result = json.dumps({"tables": result}, ensure_ascii=False)
+                                add_step(f"✅ {len(result)}個のテーブルを発見しました")
+                                
+                            elif func_name == "describe_table":
+                                table_name = func_args.get("table") or func_args.get("table_name")
+                                if not table_name:
+                                    raise ValueError(f"Missing required parameter: 'table'")
+                                add_step(f"🔍 テーブル '{table_name}' のスキーマを取得中...")
+                                result = await describe_table(
+                                    session,
+                                    func_args.get("project", PROJECT_ID),
+                                    func_args.get("dataset", DEFAULT_DATASET),
+                                    table_name
+                                )
+                                func_result = json.dumps({"columns": result}, ensure_ascii=False)
+                                add_step(f"✅ {len(result)}個のカラムを発見しました")
+                                
+                            elif func_name == "execute_query":
+                                query = func_args.get("query") or func_args.get("sql")
+                                if not query:
+                                    raise ValueError(f"Missing required parameter: 'query'")
+                                add_step("⚡ クエリを実行中...")
+                                result = await execute_query(
+                                    session,
+                                    func_args.get("project", PROJECT_ID),
+                                    func_args.get("location", LOCATION),
+                                    query
+                                )
+                                result_data = result
+                                
+                                # Convert to DataFrame for Python execution
+                                if result:
+                                    latest_dataframe = pd.DataFrame(result)
+                                    add_step(f"📊 {len(result)}行のデータを取得しました（Python処理可能）")
+                                    
+                                    # If data is large, return summary to avoid token limit
+                                    if len(result) > 100:
+                                        summary = {
+                                            "row_count": len(result),
+                                            "columns": list(result[0].keys()) if result else [],
+                                            "sample_rows": result[:5],
+                                            "message": f"Large dataset with {len(result)} rows. Full data available in Python as 'df'. Use execute_python for analysis."
+                                        }
+                                        func_result = json.dumps(summary, ensure_ascii=False, cls=DateTimeEncoder)
+                                    else:
+                                        func_result = json.dumps({"rows": result}, ensure_ascii=False, cls=DateTimeEncoder)
+                                else:
+                                    latest_dataframe = None
+                                    add_step("📊 0行のデータを取得しました")
+                                    func_result = json.dumps({"rows": []}, ensure_ascii=False)
+                                
+                            elif func_name == "execute_python":
+                                code = func_args.get("code")
+                                if not code:
+                                    raise ValueError(f"Missing required parameter: 'code'")
+                                
+                                add_step("🐍 Pythonコードを実行中...")
+                                
+                                # Prepare DataFrame dict
+                                df_dict = {}
+                                if latest_dataframe is not None:
+                                    df_dict['df'] = latest_dataframe
+                                
+                                # Execute Python code
+                                python_result = execute_python_code(code, df_dict, timeout=30)
+                                
+                                # Store result
+                                python_results.append(python_result)
+                                
+                                # Build result message
+                                result_parts = []
+                                if python_result.get('output'):
+                                    result_parts.append(f"出力:\n{python_result['output']}")
+                                if python_result.get('result'):
+                                    result_parts.append(f"結果: {python_result['result']}")
+                                if python_result.get('plots'):
+                                    result_parts.append(f"{len(python_result['plots'])}個のグラフを生成しました")
+                                
+                                func_result = json.dumps({
+                                    "output": python_result.get('output', ''),
+                                    "result": python_result.get('result'),
+                                    "plots_count": len(python_result.get('plots', []))
+                                }, ensure_ascii=False)
+                                
+                                add_step(f"✅ Python実行完了: {', '.join(result_parts) if result_parts else 'エラーなし'}")
+                                
+                            elif func_name == "suggest_chart":
+                                add_step("📈 グラフ設定を提案中...")
+                                chart_config = {
+                                    "chart_type": func_args.get("chart_type", "bar"),
+                                    "x_axis": func_args.get("x_axis"),
+                                    "y_axis": func_args.get("y_axis"),
+                                    "title": func_args.get("title", "")
+                                }
+                                result_charts.append(chart_config)
+                                func_result = json.dumps({"chart": chart_config}, ensure_ascii=False)
+                                chart_type_ja = {
+                                    "bar": "棒グラフ",
+                                    "line": "折れ線グラフ",
+                                    "pie": "円グラフ",
+                                    "doughnut": "ドーナツグラフ",
+                                    "scatter": "散布図",
+                                    "none": "グラフなし"
+                                }.get(chart_config["chart_type"], chart_config["chart_type"])
+                                add_step(f"✅ {chart_type_ja}を提案しました")
+                                
+                            else:
+                                func_result = json.dumps({"error": "Unknown function"})
+                                
+                        except Exception as e:
+                            error_msg = str(e)
+                            error_details = {
+                                "error": error_msg,
+                                "function": func_name,
+                                "arguments": func_args
+                            }
+                            
+                            if func_name == "execute_query":
+                                if "column" in error_msg.lower() or "field" in error_msg.lower():
+                                    error_details["hint"] = "Column name error detected. Use describe_table to get exact column names (case-sensitive)."
+                                elif "table" in error_msg.lower():
+                                    error_details["hint"] = "Table reference error. Use backticks: `project.dataset.table` or `dataset.table`"
+                                elif "type" in error_msg.lower() or "cast" in error_msg.lower():
+                                    error_details["hint"] = "Data type error. Use SAFE_CAST(column AS FLOAT64) for type conversion."
+                                elif "syntax" in error_msg.lower():
+                                    error_details["hint"] = "SQL syntax error. Check BigQuery syntax: use backticks for tables, proper GROUP BY, etc."
+                                else:
+                                    error_details["hint"] = "Query execution failed. Review the error message and check: 1) Column names (case-sensitive), 2) Table references (use backticks), 3) Data types, 4) BigQuery syntax."
+                            
+                            add_step(f"❌ {func_name} エラー: {error_msg}")
+                            func_result = json.dumps(error_details, ensure_ascii=False)
+                        
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": func_result
+                        })
+                else:
+                    messages.append(assistant_message_dict)
+                    add_step("✅ 分析完了")
+                    processing_time = time.time() - start_time
+                    
+                    # GPT-5の場合、推論過程を取得
+                    reasoning_content = ""
+                    if hasattr(assistant_message, 'reasoning_content') and assistant_message.reasoning_content:
+                        reasoning_content = assistant_message.reasoning_content
+                        add_reasoning(reasoning_content)  # リアルタイムで chat_tasks に保存
+                    
+                    return {
+                        "answer": assistant_message.content,
+                        "reasoning": reasoning_content,
+                        "steps": steps,
+                        "data": result_data,
+                        "charts": result_charts,
+                        "python_results": python_results,
+                        "steps_count": len(steps),
+                        "processing_time": processing_time
+                    }
+            
+            add_step("⚠️ 最大反復回数に達しました")
+            processing_time = time.time() - start_time
+            return {
+                "answer": "Maximum iterations reached.",
+                "reasoning": "",
+                "steps": steps,
+                "data": result_data,
+                "charts": result_charts,
+                "python_results": python_results,
+                "steps_count": len(steps),
+                "processing_time": processing_time
+            }
 
-# @app.route('/health')
-# def health_check():
-#     """Health check endpoint for Cloud Run and deployment monitoring"""
-#     return jsonify({
-#         "status": "healthy",
-#         "service": "bigquery-ai-agent",
-#         "timestamp": datetime.now().isoformat()
-#     }), 200
+@app.route('/health')
+def health_check():
+    """Health check endpoint for deployment"""
+    return jsonify({"status": "ok"}), 200
 
 @app.route('/')
 @login_required
 def index():
     """Render dashboard page"""
+    # Check if user has any projects
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute('SELECT COUNT(*) as count FROM projects WHERE user_id = %s', (current_user.id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    # If no projects, redirect to settings to create first project
+    if result['count'] == 0:
+        flash('まずはBigQueryプロジェクトを作成してください。', 'info')
+        return redirect(url_for('settings'))
+    
     return render_template('dashboard.html')
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -2037,11 +2795,20 @@ def chat():
         if not question:
             return jsonify({"error": "Question is required"}), 400
         
-        # Get active project configuration
-        config = get_active_project_config(current_user.id)
+        # Get user_id from current_user before background thread
+        user_id = current_user.id
         
-        if not config['api_key']:
+        # Get active project configuration
+        config = get_active_project_config(user_id)
+        
+        # Use provider from request if provided, otherwise use project config
+        provider = data.get('provider', config.get('provider', 'openai'))
+        
+        # Validate API key based on provider
+        if provider == 'openai' and not config['api_key']:
             return jsonify({"error": "OpenAI API key not configured"}), 500
+        elif provider == 'gemini' and not config.get('gemini_api_key'):
+            return jsonify({"error": "Gemini API key not configured"}), 500
         
         if not config['project_id']:
             return jsonify({"error": "BigQuery project not configured"}), 500
@@ -2049,7 +2816,7 @@ def chat():
         # Get active project ID
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute('SELECT id FROM projects WHERE user_id = %s AND is_active = true LIMIT 1', (current_user.id,))
+        cur.execute('SELECT id FROM projects WHERE user_id = %s AND is_active = true LIMIT 1', (user_id,))
         active_project = cur.fetchone()
         active_project_id = active_project['id'] if active_project else None
         
@@ -2085,7 +2852,9 @@ def chat():
                 'status': 'running',
                 'steps': ['🔧 処理を開始しました...'],
                 'result': None,
-                'error': None
+                'error': None,
+                'reasoning': '',
+                'cancelled': False
             }
         
         # Run task in background thread
@@ -2096,7 +2865,11 @@ def chat():
                     api_key=config['api_key'],
                     project_id=config['project_id'],
                     dataset_id=config['dataset_id'],
-                    service_account_json=config['service_account_json']
+                    service_account_json=config['service_account_json'],
+                    project_db_id=active_project_id,
+                    user_id=user_id,
+                    provider=provider,
+                    gemini_api_key=config.get('gemini_api_key')
                 ))
                 
                 # Save to database
@@ -2104,14 +2877,17 @@ def chat():
                     conn = get_db_connection()
                     cur = conn.cursor(cursor_factory=RealDictCursor)
                     cur.execute('''
-                        INSERT INTO chat_history (project_id, session_id, user_message, ai_response, query_result)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO chat_history (project_id, session_id, user_message, ai_response, query_result, steps_count, processing_time, reasoning_process)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (
                         active_project_id,
                         session_id,
                         question,
                         result.get('answer', ''),
-                        json.dumps(result, ensure_ascii=False, cls=DateTimeEncoder)
+                        json.dumps(result, ensure_ascii=False, cls=DateTimeEncoder),
+                        result.get('steps_count', 0),
+                        result.get('processing_time', 0),
+                        result.get('reasoning', '')
                     ))
                     
                     # Update session timestamp and title
@@ -2145,6 +2921,7 @@ def chat():
                     chat_tasks[task_id]['status'] = 'completed'
                     chat_tasks[task_id]['result'] = result
                     chat_tasks[task_id]['session_id'] = session_id
+                    chat_tasks[task_id]['reasoning'] = result.get('reasoning', '')
                     
             except Exception as e:
                 import traceback
@@ -2186,8 +2963,28 @@ def chat_status(task_id):
             "steps": task['steps'],
             "result": task['result'],
             "error": task['error'],
-            "session_id": task.get('session_id')
+            "session_id": task.get('session_id'),
+            "reasoning": task.get('reasoning', ''),
+            "cancelled": task.get('cancelled', False)
         })
+
+@app.route('/api/chat/cancel/<task_id>', methods=['POST'])
+@login_required
+def cancel_chat_task(task_id):
+    """Cancel a running chat task"""
+    with task_lock:
+        task = chat_tasks.get(task_id)
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        
+        if task['status'] != 'running':
+            return jsonify({"error": "Task is not running"}), 400
+        
+        task['cancelled'] = True
+        task['status'] = 'cancelled'
+        task['steps'].append('⛔ 処理がキャンセルされました')
+        
+        return jsonify({"success": True, "message": "Task cancelled"})
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -2221,7 +3018,9 @@ def get_settings():
         cur.execute('''
             SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
                    openai_api_key IS NOT NULL as has_api_key,
-                   service_account_json IS NOT NULL as has_service_account
+                   gemini_api_key IS NOT NULL as has_gemini_key,
+                   service_account_json IS NOT NULL as has_service_account,
+                   ai_provider
             FROM projects
             WHERE user_id = %s AND is_active = true
             LIMIT 1
@@ -2242,10 +3041,13 @@ def get_settings():
             "project_id": project['bigquery_project_id'] or '',
             "dataset": project['bigquery_dataset_id'] or '',
             "has_api_key": project['has_api_key'],
+            "has_gemini_key": project['has_gemini_key'],
             "has_service_account": project['has_service_account'],
             "project_name": project['name'],
             "project_description": project['description'] or '',
+            "ai_provider": project['ai_provider'] or 'openai',
             "openai_model": OPENAI_MODEL,  # モデルはグローバル設定
+            "gemini_model": "gemini-2.5-pro",  # Geminiモデルのデフォルト
             "location": LOCATION  # ロケーションはグローバル設定
         })
     except Exception as e:
@@ -2258,11 +3060,12 @@ def get_settings():
 @app.route('/api/settings', methods=['POST'])
 @login_required
 def save_settings():
-    """Save settings to active project"""
+    """Save settings to active project or create first project"""
     try:
-        # Get active project
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if user has any projects
         cur.execute('''
             SELECT id FROM projects
             WHERE user_id = %s AND is_active = true
@@ -2270,17 +3073,69 @@ def save_settings():
         ''', (current_user.id,))
         project = cur.fetchone()
         
+        # Track if this is a new project creation
+        is_new_project = False
+        
+        # If no active project exists, create a new one (first-time setup)
         if not project:
+            project_name = request.form.get('project_name', '新しいプロジェクト')
+            project_description = request.form.get('project_description', '')
+            ai_provider = request.form.get('ai_provider', 'openai')
+            openai_key = request.form.get('openai_key', '')
+            gemini_key = request.form.get('gemini_key', '')
+            bigquery_project_id = request.form.get('project_id', '')
+            bigquery_dataset = request.form.get('default_dataset', '')
+            
+            # Create new project with initial settings
+            cur.execute('''
+                INSERT INTO projects (
+                    user_id, name, description, ai_provider, openai_api_key, gemini_api_key,
+                    bigquery_project_id, bigquery_dataset_id, 
+                    is_active, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id, name
+            ''', (current_user.id, project_name, project_description, ai_provider,
+                  openai_key or None, gemini_key or None, bigquery_project_id or None, bigquery_dataset or None))
+            new_project = cur.fetchone()
+            project_id = new_project['id']
+            is_new_project = True
+            
+            # Handle GCP JSON authentication
+            json_source = request.form.get('json_source', 'upload')
+            if json_source == 'env':
+                # Use environment variable
+                cur.execute('''
+                    UPDATE projects 
+                    SET use_env_json = true, service_account_json = NULL, original_json_filename = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                ''', (project_id,))
+            elif 'gcp_json' in request.files:
+                json_file = request.files['gcp_json']
+                if json_file.filename:
+                    original_filename = json_file.filename
+                    json_path = os.path.join(os.getcwd(), f'gcp_credentials_project_{project_id}.json')
+                    json_file.save(json_path)
+                    cur.execute('''
+                        UPDATE projects 
+                        SET service_account_json = %s, original_json_filename = %s, use_env_json = false, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    ''', (json_path, original_filename, project_id))
+            
+            conn.commit()
             cur.close()
             conn.close()
+            
             return jsonify({
-                "success": False,
-                "error": "アクティブなプロジェクトが選択されていません"
-            }), 404
+                "success": True,
+                "message": "プロジェクトを作成しました",
+                "project_name": new_project['name'],
+                "project_id": project_id,
+                "is_new": True
+            })
         
+        # Existing project - build update fields
         project_id = project['id']
-        
-        # Build update fields
         update_fields = []
         params = []
         
@@ -2294,10 +3149,20 @@ def save_settings():
             update_fields.append('description = %s')
             params.append(request.form.get('project_description'))
         
+        # Handle AI provider
+        if request.form.get('ai_provider'):
+            update_fields.append('ai_provider = %s')
+            params.append(request.form.get('ai_provider'))
+        
         # Handle OpenAI API key
         if request.form.get('openai_key'):
             update_fields.append('openai_api_key = %s')
             params.append(request.form.get('openai_key'))
+        
+        # Handle Gemini API key
+        if request.form.get('gemini_key'):
+            update_fields.append('gemini_api_key = %s')
+            params.append(request.form.get('gemini_key'))
         
         # Handle BigQuery project ID
         if request.form.get('project_id'):
@@ -2309,15 +3174,29 @@ def save_settings():
             update_fields.append('bigquery_dataset_id = %s')
             params.append(request.form.get('default_dataset'))
         
-        # Handle GCP JSON file upload
-        if 'gcp_json' in request.files:
+        # Handle GCP JSON authentication
+        json_source = request.form.get('json_source', 'upload')
+        if json_source == 'env':
+            # Use environment variable
+            update_fields.append('use_env_json = %s')
+            params.append(True)
+            update_fields.append('service_account_json = %s')
+            params.append(None)
+            update_fields.append('original_json_filename = %s')
+            params.append(None)
+        elif 'gcp_json' in request.files:
             json_file = request.files['gcp_json']
             if json_file.filename:
                 # Save the JSON file with project-specific name
+                original_filename = json_file.filename
                 json_path = os.path.join(os.getcwd(), f'gcp_credentials_project_{project_id}.json')
                 json_file.save(json_path)
                 update_fields.append('service_account_json = %s')
                 params.append(json_path)
+                update_fields.append('original_json_filename = %s')
+                params.append(original_filename)
+                update_fields.append('use_env_json = %s')
+                params.append(False)
         
         if not update_fields:
             cur.close()
@@ -2327,7 +3206,7 @@ def save_settings():
                 "error": "更新する設定がありません"
             }), 400
         
-        # Update project
+        # Update existing project
         update_fields.append('updated_at = CURRENT_TIMESTAMP')
         params.extend([project_id, current_user.id])
         
@@ -2357,27 +3236,62 @@ def save_settings():
 @app.route('/api/get-api-key')
 @login_required
 def get_api_key():
-    """Get OpenAI API key for active project"""
+    """Get API key for active project (OpenAI or Gemini)"""
     try:
+        provider = request.args.get('provider', 'openai')
+        
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute('''
-            SELECT openai_api_key FROM projects
-            WHERE user_id = %s AND is_active = true
-            LIMIT 1
-        ''', (current_user.id,))
-        project = cur.fetchone()
-        cur.close()
-        conn.close()
         
-        if not project:
-            return jsonify({"api_key": ""})
-        
-        return jsonify({
-            "api_key": project['openai_api_key'] or ""
-        })
+        if provider == 'gemini':
+            cur.execute('''
+                SELECT gemini_api_key FROM projects
+                WHERE user_id = %s AND is_active = true
+                LIMIT 1
+            ''', (current_user.id,))
+            project = cur.fetchone()
+            cur.close()
+            conn.close()
+            
+            if not project:
+                return jsonify({"api_key": ""})
+            
+            return jsonify({
+                "api_key": project['gemini_api_key'] or ""
+            })
+        else:  # default to openai
+            cur.execute('''
+                SELECT openai_api_key FROM projects
+                WHERE user_id = %s AND is_active = true
+                LIMIT 1
+            ''', (current_user.id,))
+            project = cur.fetchone()
+            cur.close()
+            conn.close()
+            
+            if not project:
+                return jsonify({"api_key": ""})
+            
+            return jsonify({
+                "api_key": project['openai_api_key'] or ""
+            })
     except Exception as e:
         return jsonify({"api_key": ""}), 500
+
+@app.route('/api/check-env-json')
+@login_required
+def check_env_json():
+    """Check if environment variable for default GCP SA JSON is available"""
+    try:
+        # Check if GCP_SA_JSON environment variable is set
+        env_json = os.getenv('GCP_SA_JSON', '')
+        available = bool(env_json and len(env_json) > 0)
+        
+        return jsonify({
+            "available": available
+        })
+    except Exception as e:
+        return jsonify({"available": False}), 500
 
 @app.route('/api/get-json-file-info')
 @login_required
@@ -2387,7 +3301,7 @@ def get_json_file_info():
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT service_account_json FROM projects
+            SELECT service_account_json, use_env_json, original_json_filename FROM projects
             WHERE user_id = %s AND is_active = true
             LIMIT 1
         ''', (current_user.id,))
@@ -2396,20 +3310,35 @@ def get_json_file_info():
         conn.close()
         
         if not project:
-            return jsonify({"exists": False})
+            return jsonify({"exists": False, "use_env": False})
         
-        json_path = project['service_account_json']
-        if json_path and os.path.exists(json_path):
-            filename = os.path.basename(json_path)
+        # Check if using environment variable
+        if project.get('use_env_json'):
             return jsonify({
                 "exists": True,
+                "use_env": True,
+                "filename": "環境変数（デフォルト設定）"
+            })
+        
+        json_path = project['service_account_json']
+        original_filename = project.get('original_json_filename')
+        print(f"DEBUG get-json-file-info: json_path={json_path}, exists={os.path.exists(json_path) if json_path else False}")
+        
+        if json_path and os.path.exists(json_path):
+            # Use original filename if available, otherwise fall back to the stored filename
+            filename = original_filename if original_filename else os.path.basename(json_path)
+            print(f"DEBUG get-json-file-info: File found - {filename}")
+            return jsonify({
+                "exists": True,
+                "use_env": False,
                 "filename": filename,
                 "path": json_path
             })
         
-        return jsonify({"exists": False})
+        print(f"DEBUG get-json-file-info: No file - returning exists=False")
+        return jsonify({"exists": False, "use_env": False})
     except Exception as e:
-        return jsonify({"exists": False}), 500
+        return jsonify({"exists": False, "use_env": False}), 500
 
 @app.route('/api/delete-json-file', methods=['POST'])
 @login_required
@@ -2442,7 +3371,7 @@ def delete_json_file():
         # Update database to remove JSON path
         cur.execute('''
             UPDATE projects
-            SET service_account_json = NULL, updated_at = CURRENT_TIMESTAMP
+            SET service_account_json = NULL, original_json_filename = NULL, updated_at = CURRENT_TIMESTAMP
             WHERE id = %s AND user_id = %s
         ''', (project['id'], current_user.id))
         
@@ -2518,9 +3447,9 @@ def test_connection():
             "traceback": traceback.format_exc()
         }), 500
 
-# # ============================================
-# # Project Management API
-# # ============================================
+# ============================================
+# Project Management API
+# ============================================
 
 @app.route('/api/projects', methods=['GET'])
 @login_required
@@ -2812,9 +3741,9 @@ def get_active_project():
             "traceback": traceback.format_exc()
         }), 500
 
-# # ============================================
-# # Chat Session Management API
-# # ============================================
+# ============================================
+# Chat Session Management API
+# ============================================
 
 @app.route('/api/chat-sessions', methods=['POST'])
 @login_required
@@ -2940,7 +3869,7 @@ def get_session_messages(session_id):
         
         # Get all messages for this session
         cur.execute('''
-            SELECT id, user_message, ai_response, query_result, created_at
+            SELECT id, user_message, ai_response, query_result, created_at, steps_count, processing_time, reasoning_process
             FROM chat_history
             WHERE session_id = %s
             ORDER BY created_at ASC
@@ -3053,9 +3982,9 @@ def delete_session(session_id):
             "traceback": traceback.format_exc()
         }), 500
 
-# # ============================================
-# # Account Settings API
-# # ============================================
+# ============================================
+# Account Settings API
+# ============================================
 
 @app.route('/api/account/password', methods=['PUT'])
 @login_required
@@ -3198,19 +4127,323 @@ def delete_account():
             "traceback": traceback.format_exc()
         }), 500
 
-# Security headers for production
+# ============================================
+# Memory Management API
+# ============================================
+@app.route('/api/projects/<int:project_id>/memories', methods=['GET'])
+@login_required
+def get_project_memories(project_id):
+    """Get all memories for a project"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Verify project ownership
+        cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', (project_id, current_user.id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Project not found or access denied"}), 404
+        
+        # Get all memories for this project
+        cur.execute('''
+            SELECT id, memory_key, memory_value, created_at, updated_at
+            FROM project_memories
+            WHERE project_id = %s AND user_id = %s
+            ORDER BY updated_at DESC
+        ''', (project_id, current_user.id))
+        
+        memories = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "memories": memories
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
-@app.after_request
-def set_security_headers(response):
-    """Set security headers for all responses"""
-    # Only set security headers in production
-    if os.getenv('FLASK_ENV') == 'production':
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['X-XSS-Protection'] = '1; mode=block'
-        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self';"
-    return response
+@app.route('/api/projects/<int:project_id>/memories', methods=['POST'])
+@login_required
+def create_memory(project_id):
+    """Create a new memory for a project"""
+    try:
+        data = request.json
+        memory_key = data.get('memory_key', '').strip()
+        memory_value = data.get('memory_value', '').strip()
+        
+        if not memory_key or not memory_value:
+            return jsonify({"error": "Memory key and value are required"}), 400
+        
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Verify project ownership
+        cur.execute('SELECT id FROM projects WHERE id = %s AND user_id = %s', (project_id, current_user.id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Project not found or access denied"}), 404
+        
+        # Insert memory
+        cur.execute('''
+            INSERT INTO project_memories (project_id, user_id, memory_key, memory_value, updated_at)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            RETURNING id, memory_key, memory_value, created_at, updated_at
+        ''', (project_id, current_user.id, memory_key, memory_value))
+        
+        memory = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "message": "Memory created successfully",
+            "memory": memory
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/api/memories/<int:memory_id>', methods=['PUT'])
+@login_required
+def update_memory(memory_id):
+    """Update an existing memory"""
+    try:
+        data = request.json
+        memory_key = data.get('memory_key', '').strip()
+        memory_value = data.get('memory_value', '').strip()
+        
+        if not memory_key or not memory_value:
+            return jsonify({"error": "Memory key and value are required"}), 400
+        
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Verify memory ownership
+        cur.execute('SELECT id FROM project_memories WHERE id = %s AND user_id = %s', (memory_id, current_user.id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Memory not found or access denied"}), 404
+        
+        # Update memory
+        cur.execute('''
+            UPDATE project_memories
+            SET memory_key = %s, memory_value = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            RETURNING id, memory_key, memory_value, created_at, updated_at
+        ''', (memory_key, memory_value, memory_id))
+        
+        memory = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "message": "Memory updated successfully",
+            "memory": memory
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/api/memories/<int:memory_id>', methods=['DELETE'])
+@login_required
+def delete_memory(memory_id):
+    """Delete a memory"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Verify memory ownership
+        cur.execute('SELECT id FROM project_memories WHERE id = %s AND user_id = %s', (memory_id, current_user.id))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Memory not found or access denied"}), 404
+        
+        # Delete memory
+        cur.execute('DELETE FROM project_memories WHERE id = %s', (memory_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        return jsonify({
+            "success": True,
+            "message": "Memory deleted successfully"
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/api/projects/<int:project_id>/schema-tree', methods=['GET'])
+@login_required
+def get_schema_tree(project_id):
+    """Get BigQuery schema tree for a project"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cur.execute('''
+            SELECT bigquery_project_id, bigquery_dataset_id, service_account_json
+            FROM projects
+            WHERE id = %s AND user_id = %s
+        ''', (project_id, current_user.id))
+        
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if not project:
+            return jsonify({"error": "Project not found"}), 404
+        
+        if not project['bigquery_project_id']:
+            return jsonify({"error": "BigQuery project not configured"}), 400
+        
+        bq_project_id = project['bigquery_project_id']
+        bq_dataset_id = project['bigquery_dataset_id']
+        service_account_json = project['service_account_json']
+        
+        temp_file = None
+        try:
+            env = os.environ.copy()
+            if service_account_json:
+                temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+                temp_file.write(service_account_json)
+                temp_file.close()
+                env["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file.name
+            
+            server_params = StdioServerParameters(
+                command="mcp-server-bigquery",
+                args=["--project", bq_project_id, "--location", LOCATION],
+                env=env
+            )
+            
+            async def fetch_schema():
+                async with AsyncExitStack() as stack:
+                    stdio_transport = await stack.enter_async_context(stdio_client(server_params))
+                    stdio, write = stdio_transport
+                    session = await stack.enter_async_context(ClientSession(stdio, write))
+                    
+                    await session.initialize()
+                    
+                    list_tools_result = await session.list_tools()
+                    tools = list_tools_result.tools
+                    
+                    list_tables_tool = None
+                    describe_table_tool = None
+                    
+                    for tool in tools:
+                        if tool.name == "list-tables":
+                            list_tables_tool = tool
+                        elif tool.name == "describe-table":
+                            describe_table_tool = tool
+                    
+                    if not list_tables_tool or not describe_table_tool:
+                        raise Exception("Required MCP tools not available")
+                    
+                    list_tables_args = {}
+                    if bq_dataset_id:
+                        list_tables_args["dataset_id"] = bq_dataset_id
+                    
+                    tables_result = await session.call_tool(list_tables_tool.name, list_tables_args)
+                    
+                    if not tables_result or not tables_result.content:
+                        return {"datasets": []}
+                    
+                    tables_text = ""
+                    for content in tables_result.content:
+                        if hasattr(content, 'text'):
+                            tables_text += content.text
+                    
+                    dataset_tree = {}
+                    
+                    for line in tables_text.strip().split('\n'):
+                        if not line.strip() or line.startswith('#') or line.startswith('Found'):
+                            continue
+                        
+                        parts = line.strip().split('.')
+                        if len(parts) >= 2:
+                            dataset = parts[0]
+                            table = parts[1]
+                            
+                            if dataset not in dataset_tree:
+                                dataset_tree[dataset] = []
+                            
+                            try:
+                                schema_result = await session.call_tool(
+                                    describe_table_tool.name,
+                                    {"table_id": f"{dataset}.{table}"}
+                                )
+                                
+                                schema_text = ""
+                                for content in schema_result.content:
+                                    if hasattr(content, 'text'):
+                                        schema_text += content.text
+                                
+                                columns = []
+                                for schema_line in schema_text.strip().split('\n'):
+                                    if schema_line.strip() and not schema_line.startswith('Schema') and not schema_line.startswith('Column'):
+                                        column_parts = schema_line.strip().split()
+                                        if len(column_parts) >= 2:
+                                            columns.append({
+                                                "name": column_parts[0],
+                                                "type": column_parts[1],
+                                                "mode": column_parts[2] if len(column_parts) > 2 else "NULLABLE"
+                                            })
+                                
+                                dataset_tree[dataset].append({
+                                    "name": table,
+                                    "columns": columns
+                                })
+                            except Exception as e:
+                                dataset_tree[dataset].append({
+                                    "name": table,
+                                    "error": str(e)
+                                })
+                    
+                    result = []
+                    for dataset_name, tables in dataset_tree.items():
+                        result.append({
+                            "name": dataset_name,
+                            "tables": tables
+                        })
+                    
+                    return {"datasets": result}
+            
+            result = asyncio.run(fetch_schema())
+            
+            return jsonify({
+                "success": True,
+                "schema_tree": result
+            })
+        finally:
+            if temp_file and hasattr(temp_file, 'name') and os.path.exists(temp_file.name):
+                os.unlink(temp_file.name)
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 
 @app.route("/test")
