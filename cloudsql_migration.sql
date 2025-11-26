@@ -38,10 +38,14 @@ CREATE TABLE IF NOT EXISTS projects (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
+    ai_provider VARCHAR(50) DEFAULT 'openai',
     openai_api_key TEXT,
+    gemini_api_key TEXT,
     bigquery_project_id VARCHAR(255),
     bigquery_dataset_id VARCHAR(255),
     service_account_json TEXT,
+    use_env_json BOOLEAN DEFAULT false,
+    original_json_filename VARCHAR(255),
     is_active BOOLEAN DEFAULT false,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -72,11 +76,29 @@ CREATE TABLE IF NOT EXISTS chat_history (
     user_message TEXT NOT NULL,
     ai_response TEXT,
     query_result JSONB,
+    steps_count INTEGER DEFAULT 0,
+    processing_time REAL DEFAULT 0,
+    reasoning_process TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ================================================================
--- 5. Indexes for Performance Optimization
+-- 5. Project Memories Table
+-- ================================================================
+-- プロジェクトごとの共有メモリ/コンテキストを格納するテーブル
+-- AIが分析時に参照するプロジェクト固有の情報を保存
+CREATE TABLE IF NOT EXISTS project_memories (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    memory_key VARCHAR(255) NOT NULL,
+    memory_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ================================================================
+-- 6. Indexes for Performance Optimization
 -- ================================================================
 
 -- Users table indexes
@@ -95,8 +117,13 @@ CREATE INDEX IF NOT EXISTS idx_chat_history_project_id ON chat_history(project_i
 CREATE INDEX IF NOT EXISTS idx_chat_history_session_id ON chat_history(session_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_chat_history_created_at ON chat_history(project_id, created_at DESC);
 
+-- Project memories table indexes
+CREATE INDEX IF NOT EXISTS idx_project_memories_project_id ON project_memories(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_memories_user_id ON project_memories(user_id);
+CREATE INDEX IF NOT EXISTS idx_project_memories_key ON project_memories(project_id, memory_key);
+
 -- ================================================================
--- 6. Additional Constraints and Comments
+-- 7. Additional Constraints and Comments
 -- ================================================================
 
 -- テーブルコメント
@@ -104,6 +131,7 @@ COMMENT ON TABLE users IS 'ユーザー認証情報';
 COMMENT ON TABLE projects IS 'BigQueryプロジェクト設定（ユーザーごと）';
 COMMENT ON TABLE chat_sessions IS 'チャットセッション（プロジェクトごと）';
 COMMENT ON TABLE chat_history IS '会話履歴（セッションごと）';
+COMMENT ON TABLE project_memories IS 'プロジェクト共有メモリ（AI参照用）';
 
 -- カラムコメント - Users
 COMMENT ON COLUMN users.id IS 'ユーザーID（主キー）';
@@ -117,10 +145,14 @@ COMMENT ON COLUMN projects.id IS 'プロジェクトID（主キー）';
 COMMENT ON COLUMN projects.user_id IS 'ユーザーID（外部キー）';
 COMMENT ON COLUMN projects.name IS 'プロジェクト名';
 COMMENT ON COLUMN projects.description IS 'プロジェクト説明';
+COMMENT ON COLUMN projects.ai_provider IS 'AIプロバイダー（openai/gemini）';
 COMMENT ON COLUMN projects.openai_api_key IS 'OpenAI APIキー';
+COMMENT ON COLUMN projects.gemini_api_key IS 'Gemini APIキー';
 COMMENT ON COLUMN projects.bigquery_project_id IS 'BigQuery プロジェクトID';
 COMMENT ON COLUMN projects.bigquery_dataset_id IS 'BigQuery データセットID';
 COMMENT ON COLUMN projects.service_account_json IS 'GCPサービスアカウントJSON';
+COMMENT ON COLUMN projects.use_env_json IS '環境変数からJSON使用フラグ';
+COMMENT ON COLUMN projects.original_json_filename IS 'アップロードされたJSONファイル名';
 COMMENT ON COLUMN projects.is_active IS 'アクティブフラグ（ユーザーごとに1つのみ）';
 COMMENT ON COLUMN projects.created_at IS 'プロジェクト作成日時';
 COMMENT ON COLUMN projects.updated_at IS '最終更新日時';
@@ -139,7 +171,19 @@ COMMENT ON COLUMN chat_history.session_id IS 'セッションID（外部キー�
 COMMENT ON COLUMN chat_history.user_message IS 'ユーザーメッセージ';
 COMMENT ON COLUMN chat_history.ai_response IS 'AI応答';
 COMMENT ON COLUMN chat_history.query_result IS 'クエリ結果（JSON形式）';
+COMMENT ON COLUMN chat_history.steps_count IS '処理ステップ数';
+COMMENT ON COLUMN chat_history.processing_time IS '処理時間（秒）';
+COMMENT ON COLUMN chat_history.reasoning_process IS 'AI推論過程';
 COMMENT ON COLUMN chat_history.created_at IS 'メッセージ作成日時';
+
+-- カラムコメント - Project Memories
+COMMENT ON COLUMN project_memories.id IS 'メモリID（主キー）';
+COMMENT ON COLUMN project_memories.project_id IS 'プロジェクトID（外部キー）';
+COMMENT ON COLUMN project_memories.user_id IS 'ユーザーID（外部キー）';
+COMMENT ON COLUMN project_memories.memory_key IS 'メモリキー';
+COMMENT ON COLUMN project_memories.memory_value IS 'メモリ値';
+COMMENT ON COLUMN project_memories.created_at IS '作成日時';
+COMMENT ON COLUMN project_memories.updated_at IS '更新日時';
 
 -- トランザクションコミット
 COMMIT;
