@@ -267,11 +267,11 @@
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="radio" name="jsonSource" id="jsonSourceEnv" value="env">
+                            <input class="form-check-input" type="radio" name="jsonSource" id="jsonSourceEnv" value="adc">
                             <label class="form-check-label" for="jsonSourceEnv">
-                                環境変数のデフォルト設定を使用
+                                Cloud Run サービスアカウント（ADC）を使用
                                 <span class="badge bg-success ms-2" id="envAvailableBadge" style="display: none;">利用可能</span>
-                                <span class="badge bg-warning ms-2" id="envNotAvailableBadge" style="display: none;">未設定</span>
+                                <span class="badge bg-warning ms-2" id="envNotAvailableBadge" style="display: none;">利用不可</span>
                             </label>
                         </div>
                     </div>
@@ -306,11 +306,18 @@
                         </div>
                     </div>
                     
-                    <!-- 環境変数使用時の説明 -->
+                    <!-- ADC使用時の説明 -->
                     <div id="envSection" style="display: none;">
                         <div class="alert alert-info">
-                            <i class="bi bi-info-circle-fill"></i> 
-                            環境変数に設定されたデフォルトのサービスアカウント設定を使用します。
+                            <i class="bi bi-cloud-fill"></i> 
+                            <strong>Cloud Run サービスアカウント（ADC）を使用</strong><br>
+                            Application Default Credentials（ADC）を使用して認証します。
+                            Cloud Run環境では、サービスに割り当てられたサービスアカウントが自動的に使用されます。
+                            <hr class="my-2">
+                            <small class="text-muted">
+                                <i class="bi bi-info-circle"></i> 
+                                Cloud Runにデプロイする際は、BigQueryへのアクセス権限を持つサービスアカウントを割り当ててください。
+                            </small>
                         </div>
                     </div>
                 </div>
