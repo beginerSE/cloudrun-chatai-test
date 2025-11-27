@@ -72,6 +72,20 @@ login_manager.login_view = 'login'
 login_manager.login_message = 'このページにアクセスするにはログインが必要です。'
 
 
+@login_manager.unauthorized_handler
+def unauthorized_callback():
+    """Custom unauthorized handler - returns JSON for API requests, redirect for pages"""
+    if request.path.startswith('/api/'):
+        # API request - return JSON error instead of redirect
+        return jsonify({
+            "error": "認証が必要です。再度ログインしてください。",
+            "auth_required": True,
+            "redirect": url_for('login')
+        }), 401
+    # Regular page request - redirect to login
+    return redirect(url_for('login', next=request.url))
+
+
 # Progress tracking for chat tasks
 # chat_tasks = {}  # {task_id: {'status': 'running'|'completed'|'error', 'steps': [], 'result': {}, 'error': ''}}
 # task_lock = threading.Lock()
@@ -248,6 +262,8 @@ def get_db_connection():
         conn = psycopg2.connect(DATABASE_URL)
     
     return conn
+
+
 
 
 # Safe redirect helper
