@@ -3905,19 +3905,56 @@ def test_service_account():
                 project_id_from_credentials = detected_project
                 
                 # Get service account email from ADC
-                if hasattr(credentials, 'service_account_email'):
+                service_account_email = None
+                
+                # Method 1: Try to get from credentials object
+                if hasattr(credentials, 'service_account_email') and credentials.service_account_email:
                     service_account_email = credentials.service_account_email
-                elif hasattr(credentials, '_service_account_email'):
+                elif hasattr(credentials, '_service_account_email') and credentials._service_account_email:
                     service_account_email = credentials._service_account_email
-                else:
-                    # Try to get from token info
+                
+                # Method 2: Try to refresh and get from credentials
+                if not service_account_email or service_account_email == 'default':
                     try:
                         from google.auth.transport import requests as google_requests
                         credentials.refresh(google_requests.Request())
-                        if hasattr(credentials, 'service_account_email'):
+                        if hasattr(credentials, 'service_account_email') and credentials.service_account_email:
                             service_account_email = credentials.service_account_email
                     except:
-                        service_account_email = "(ADC経由 - サービスアカウント名を取得できません)"
+                        pass
+                
+                # Method 3: Query GCP Metadata Server (works in Cloud Run/GCE)
+                if not service_account_email or service_account_email == 'default':
+                    try:
+                        import urllib.request
+                        metadata_url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email"
+                        req = urllib.request.Request(metadata_url, headers={"Metadata-Flavor": "Google"})
+                        with urllib.request.urlopen(req, timeout=2) as response:
+                            service_account_email = response.read().decode('utf-8').strip()
+                    except Exception as meta_error:
+                        print(f"Metadata server query failed: {meta_error}")
+                
+                # Method 4: Use IAM API to get service account info
+                if not service_account_email or service_account_email == 'default':
+                    try:
+                        from google.auth.transport import requests as google_requests
+                        from google.oauth2 import id_token
+                        # Try to get identity token info
+                        credentials.refresh(google_requests.Request())
+                        if hasattr(credentials, 'token') and credentials.token:
+                            import urllib.request
+                            import json as json_module
+                            token_info_url = f"https://oauth2.googleapis.com/tokeninfo?access_token={credentials.token}"
+                            req = urllib.request.Request(token_info_url)
+                            with urllib.request.urlopen(req, timeout=5) as response:
+                                token_info = json_module.loads(response.read().decode('utf-8'))
+                                if 'email' in token_info:
+                                    service_account_email = token_info['email']
+                    except Exception as token_error:
+                        print(f"Token info query failed: {token_error}")
+                
+                if not service_account_email:
+                    service_account_email = "(サービスアカウント名を取得できません)"
                 
                 # Create BigQuery client with ADC
                 client = bigquery.Client(project=bq_project_id or detected_project)
