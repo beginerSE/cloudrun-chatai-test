@@ -45,6 +45,15 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SESSION_SECRET', 'dev-secret-key-change-in-production')
 
+@app.after_request
+def add_header(response):
+    """Disable caching for HTML pages during development"""
+    if 'text/html' in response.content_type:
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
 # Configure Flask to use DateTimeEncoder for all JSON responses
 from flask.json.provider import DefaultJSONProvider
 class DateTimeJSONProvider(DefaultJSONProvider):
@@ -131,6 +140,23 @@ def load_user(user_id):
         return User(user_data['id'], user_data['username'], user_data['email'])
     return None
 
+def extract_project_id_from_sa_json(service_account_json_path: str) -> str:
+    """Extract project_id from service account JSON file"""
+    if not service_account_json_path:
+        return None
+    try:
+        # Handle both file path and JSON string
+        if os.path.exists(service_account_json_path):
+            with open(service_account_json_path, 'r') as f:
+                sa_data = json.load(f)
+        else:
+            # Try parsing as JSON string
+            sa_data = json.loads(service_account_json_path)
+        return sa_data.get('project_id')
+    except Exception as e:
+        print(f"Error extracting project_id from service account JSON: {e}")
+        return None
+
 def get_active_project_config(user_id):
     """Get configuration from active project or fall back to env variables"""
     conn = get_db_connection()
@@ -147,13 +173,22 @@ def get_active_project_config(user_id):
     
     if project:
         provider = project['ai_provider'] or 'openai'
+        service_account_json = project['service_account_json'] or GCP_SA_JSON
+        
+        # Get project_id: prefer explicit setting, then extract from service account JSON
+        project_id = project['bigquery_project_id']
+        if not project_id and service_account_json:
+            project_id = extract_project_id_from_sa_json(service_account_json)
+        if not project_id:
+            project_id = PROJECT_ID
+        
         return {
             'api_key': project['openai_api_key'] or OPENAI_API_KEY,
             'gemini_api_key': project['gemini_api_key'],
             'provider': provider,
-            'project_id': project['bigquery_project_id'] or PROJECT_ID,
+            'project_id': project_id,
             'dataset_id': project['bigquery_dataset_id'] or DEFAULT_DATASET,
-            'service_account_json': project['service_account_json'] or GCP_SA_JSON
+            'service_account_json': service_account_json
         }
     else:
         # Fall back to environment variables
@@ -2594,10 +2629,10 @@ def index():
     cur.close()
     conn.close()
     
-    # If no projects, redirect to settings to create first project
+    # If no projects, redirect to project management page
     if result['count'] == 0:
-        flash('まずはBigQueryプロジェクトを作成してください。', 'info')
-        return redirect(url_for('settings'))
+        flash('まずプロジェクトを作成してください。', 'info')
+        return redirect(url_for('projects'))
     
     return render_template('dashboard.html')
 
@@ -2700,10 +2735,20 @@ def account_settings():
 def agent_chat_redirect():
     """Redirect to latest chat session or create new one"""
     try:
-        # Get active project
+        # Check if user has any projects first
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
+        cur.execute('SELECT id FROM projects WHERE user_id = %s LIMIT 1', (current_user.id,))
+        has_any_project = cur.fetchone() is not None
+        
+        if not has_any_project:
+            cur.close()
+            conn.close()
+            flash('まずプロジェクトを作成してください。', 'info')
+            return redirect(url_for('projects'))
+        
+        # Get active project
         cur.execute('''
             SELECT id FROM projects
             WHERE user_id = %s AND is_active = true
@@ -2712,7 +2757,7 @@ def agent_chat_redirect():
         project = cur.fetchone()
         
         if not project:
-            # No active project - show page with warning
+            # Has projects but no active one - show page with warning to select project
             cur.close()
             conn.close()
             return render_template('agent_chat.html', session_id=None)
@@ -3006,6 +3051,18 @@ def projects():
 @login_required
 def settings():
     """Render settings page"""
+    # Check if user has any projects
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute('SELECT id FROM projects WHERE user_id = %s LIMIT 1', (current_user.id,))
+    has_project = cur.fetchone() is not None
+    cur.close()
+    conn.close()
+    
+    if not has_project:
+        flash('まずプロジェクトを作成してください。', 'info')
+        return redirect(url_for('projects'))
+    
     return render_template('settings.html')
 
 @app.route('/api/settings', methods=['GET'])
@@ -3019,6 +3076,7 @@ def get_settings():
             SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
                    openai_api_key IS NOT NULL as has_api_key,
                    gemini_api_key IS NOT NULL as has_gemini_key,
+                   service_account_json,
                    service_account_json IS NOT NULL as has_service_account,
                    ai_provider
             FROM projects
@@ -3036,9 +3094,20 @@ def get_settings():
                 "no_project": True
             }), 404
         
+        # Get project_id: prefer explicit setting, then extract from service account JSON
+        bigquery_project_id = project['bigquery_project_id']
+        sa_extracted_project_id = None
+        if project['service_account_json']:
+            sa_extracted_project_id = extract_project_id_from_sa_json(project['service_account_json'])
+        
+        # Use explicit setting if available, otherwise use extracted from SA JSON
+        effective_project_id = bigquery_project_id or sa_extracted_project_id or ''
+        
         return jsonify({
             "success": True,
-            "project_id": project['bigquery_project_id'] or '',
+            "project_id": effective_project_id,
+            "project_id_source": "explicit" if bigquery_project_id else ("service_account" if sa_extracted_project_id else "none"),
+            "sa_extracted_project_id": sa_extracted_project_id,
             "dataset": project['bigquery_dataset_id'] or '',
             "has_api_key": project['has_api_key'],
             "has_gemini_key": project['has_gemini_key'],
@@ -3046,9 +3115,9 @@ def get_settings():
             "project_name": project['name'],
             "project_description": project['description'] or '',
             "ai_provider": project['ai_provider'] or 'openai',
-            "openai_model": OPENAI_MODEL,  # モデルはグローバル設定
-            "gemini_model": "gemini-2.5-pro",  # Geminiモデルのデフォルト
-            "location": LOCATION  # ロケーションはグローバル設定
+            "openai_model": OPENAI_MODEL,
+            "gemini_model": "gemini-2.5-pro",
+            "location": LOCATION
         })
     except Exception as e:
         import traceback
@@ -3392,13 +3461,13 @@ def delete_json_file():
 @app.route('/api/test-connection', methods=['POST'])
 @login_required
 def test_connection():
-    """Test OpenAI and BigQuery connection for active project"""
+    """Test AI provider (OpenAI/Gemini) and BigQuery connection for active project"""
     try:
         # Get active project configuration
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT openai_api_key, bigquery_project_id, bigquery_dataset_id, service_account_json
+            SELECT openai_api_key, gemini_api_key, ai_provider, bigquery_project_id, bigquery_dataset_id, service_account_json
             FROM projects
             WHERE user_id = %s AND is_active = true
             LIMIT 1
@@ -3413,31 +3482,90 @@ def test_connection():
                 "error": "アクティブなプロジェクトが選択されていません"
             }), 404
         
-        api_key = project['openai_api_key']
+        openai_api_key = project['openai_api_key']
+        gemini_api_key = project['gemini_api_key']
+        ai_provider = project['ai_provider'] or 'openai'
         project_id = project['bigquery_project_id']
         gcp_json = project['service_account_json']
         
-        # Test OpenAI
-        if not api_key:
-            return jsonify({"error": "OpenAI API key が設定されていません"}), 400
+        # Check if at least one AI provider is configured
+        if not openai_api_key and not gemini_api_key:
+            return jsonify({
+                "error": "OpenAI API キーまたは Gemini API キーのどちらかを設定してください"
+            }), 400
         
-        try:
-            client = OpenAI(api_key=api_key)
-            client.models.list()
-            openai_ok = True
-        except Exception as e:
-            return jsonify({"error": f"OpenAI 接続エラー: {str(e)}"}), 400
+        ai_test_result = None
+        ai_provider_tested = None
+        
+        # Test the selected AI provider
+        if ai_provider == 'openai':
+            if not openai_api_key:
+                return jsonify({
+                    "error": "OpenAI が選択されていますが、OpenAI API キーが設定されていません。キーを入力するか、Gemini に切り替えてください。"
+                }), 400
+            
+            try:
+                client = OpenAI(api_key=openai_api_key)
+                client.models.list()
+                ai_test_result = "success"
+                ai_provider_tested = "OpenAI"
+            except Exception as e:
+                error_msg = str(e)
+                if "invalid_api_key" in error_msg.lower() or "incorrect api key" in error_msg.lower() or "401" in error_msg:
+                    return jsonify({
+                        "error": "OpenAI API キーが無効です。正しいキーを入力してください。"
+                    }), 400
+                elif "insufficient_quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+                    return jsonify({
+                        "error": "OpenAI API の利用制限に達しています。プランを確認するか、しばらく待ってから再試行してください。"
+                    }), 400
+                else:
+                    return jsonify({
+                        "error": f"OpenAI 接続エラー: {error_msg}"
+                    }), 400
+        
+        elif ai_provider == 'gemini':
+            if not gemini_api_key:
+                return jsonify({
+                    "error": "Gemini が選択されていますが、Gemini API キーが設定されていません。キーを入力するか、OpenAI に切り替えてください。"
+                }), 400
+            
+            try:
+                genai.configure(api_key=gemini_api_key)
+                model = genai.GenerativeModel('gemini-2.0-flash')
+                # Simple test to verify the API key works
+                response = model.generate_content("Hello", generation_config={"max_output_tokens": 5})
+                ai_test_result = "success"
+                ai_provider_tested = "Gemini"
+            except Exception as e:
+                error_msg = str(e)
+                if "api_key" in error_msg.lower() or "invalid" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
+                    return jsonify({
+                        "error": "Gemini API キーが無効です。正しいキーを入力してください。"
+                    }), 400
+                elif "quota" in error_msg.lower() or "rate" in error_msg.lower():
+                    return jsonify({
+                        "error": "Gemini API の利用制限に達しています。プランを確認するか、しばらく待ってから再試行してください。"
+                    }), 400
+                else:
+                    return jsonify({
+                        "error": f"Gemini 接続エラー: {error_msg}"
+                    }), 400
         
         # Test BigQuery
         if not project_id or not gcp_json:
-            return jsonify({"error": "BigQuery が完全に設定されていません"}), 400
+            return jsonify({
+                "error": "BigQuery が完全に設定されていません（プロジェクトIDとサービスアカウントが必要です）"
+            }), 400
         
         if not os.path.exists(gcp_json):
-            return jsonify({"error": f"GCP 認証ファイルが見つかりません: {gcp_json}"}), 400
+            return jsonify({
+                "error": f"GCP 認証ファイルが見つかりません"
+            }), 400
         
         return jsonify({
             "success": True,
-            "message": "すべての接続が成功しました！OpenAIとBigQueryが正しく設定されています。"
+            "message": f"すべての接続が成功しました！{ai_provider_tested} と BigQuery が正しく設定されています。"
         })
     
     except Exception as e:
@@ -3445,6 +3573,86 @@ def test_connection():
         return jsonify({
             "error": str(e),
             "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/api/validate-api-key', methods=['POST'])
+@login_required
+def validate_api_key():
+    """Validate an API key before saving"""
+    try:
+        data = request.json
+        provider = data.get('provider', '')
+        api_key = data.get('api_key', '')
+        
+        if not api_key:
+            return jsonify({
+                "valid": False,
+                "error": "API キーが入力されていません"
+            }), 400
+        
+        if provider == 'openai':
+            try:
+                client = OpenAI(api_key=api_key)
+                client.models.list()
+                return jsonify({
+                    "valid": True,
+                    "message": "OpenAI API キーは有効です"
+                })
+            except Exception as e:
+                error_msg = str(e)
+                if "invalid_api_key" in error_msg.lower() or "incorrect api key" in error_msg.lower() or "401" in error_msg:
+                    return jsonify({
+                        "valid": False,
+                        "error": "OpenAI API キーが無効です。正しいキーを入力してください。"
+                    }), 400
+                elif "insufficient_quota" in error_msg.lower() or "rate_limit" in error_msg.lower():
+                    return jsonify({
+                        "valid": False,
+                        "error": "OpenAI API の利用制限に達しています。"
+                    }), 400
+                else:
+                    return jsonify({
+                        "valid": False,
+                        "error": f"OpenAI 接続エラー: {error_msg}"
+                    }), 400
+        
+        elif provider == 'gemini':
+            try:
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('gemini-2.0-flash')
+                response = model.generate_content("Hello", generation_config={"max_output_tokens": 5})
+                return jsonify({
+                    "valid": True,
+                    "message": "Gemini API キーは有効です"
+                })
+            except Exception as e:
+                error_msg = str(e)
+                if "api_key" in error_msg.lower() or "invalid" in error_msg.lower() or "401" in error_msg or "403" in error_msg:
+                    return jsonify({
+                        "valid": False,
+                        "error": "Gemini API キーが無効です。正しいキーを入力してください。"
+                    }), 400
+                elif "quota" in error_msg.lower() or "rate" in error_msg.lower():
+                    return jsonify({
+                        "valid": False,
+                        "error": "Gemini API の利用制限に達しています。"
+                    }), 400
+                else:
+                    return jsonify({
+                        "valid": False,
+                        "error": f"Gemini 接続エラー: {error_msg}"
+                    }), 400
+        else:
+            return jsonify({
+                "valid": False,
+                "error": "不明なプロバイダーです"
+            }), 400
+    
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "valid": False,
+            "error": str(e)
         }), 500
 
 # ============================================
@@ -4296,7 +4504,7 @@ def delete_memory(memory_id):
 @app.route('/api/projects/<int:project_id>/schema-tree', methods=['GET'])
 @login_required
 def get_schema_tree(project_id):
-    """Get BigQuery schema tree for a project"""
+    """Get BigQuery schema tree for a project using BigQuery client library"""
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -4323,120 +4531,82 @@ def get_schema_tree(project_id):
         
         temp_file = None
         try:
-            env = os.environ.copy()
-            if service_account_json:
-                temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-                temp_file.write(service_account_json)
-                temp_file.close()
-                env["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file.name
+            from google.cloud import bigquery
+            from google.oauth2 import service_account
             
-            server_params = StdioServerParameters(
-                command="mcp-server-bigquery",
-                args=["--project", bq_project_id, "--location", LOCATION],
-                env=env
-            )
+            bq_client = None
             
-            async def fetch_schema():
-                async with AsyncExitStack() as stack:
-                    stdio_transport = await stack.enter_async_context(stdio_client(server_params))
-                    stdio, write = stdio_transport
-                    session = await stack.enter_async_context(ClientSession(stdio, write))
+            credentials_file = f"gcp_credentials_project_{project_id}.json"
+            if os.path.exists(credentials_file):
+                credentials = service_account.Credentials.from_service_account_file(credentials_file)
+                bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
+            elif service_account_json:
+                try:
+                    creds_data = json.loads(service_account_json)
+                    credentials = service_account.Credentials.from_service_account_info(creds_data)
+                    bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
+                except json.JSONDecodeError:
+                    return jsonify({"error": "Invalid service account JSON format"}), 400
+            else:
+                bq_client = bigquery.Client(project=bq_project_id)
+            
+            dataset_tree = {}
+            
+            if bq_dataset_id:
+                datasets_to_process = [bq_dataset_id]
+            else:
+                datasets = list(bq_client.list_datasets())
+                datasets_to_process = [ds.dataset_id for ds in datasets[:10]]
+            
+            for dataset_id in datasets_to_process:
+                try:
+                    tables = list(bq_client.list_tables(dataset_id))
+                    dataset_tree[dataset_id] = []
                     
-                    await session.initialize()
-                    
-                    list_tools_result = await session.list_tools()
-                    tools = list_tools_result.tools
-                    
-                    list_tables_tool = None
-                    describe_table_tool = None
-                    
-                    for tool in tools:
-                        if tool.name == "list-tables":
-                            list_tables_tool = tool
-                        elif tool.name == "describe-table":
-                            describe_table_tool = tool
-                    
-                    if not list_tables_tool or not describe_table_tool:
-                        raise Exception("Required MCP tools not available")
-                    
-                    list_tables_args = {}
-                    if bq_dataset_id:
-                        list_tables_args["dataset_id"] = bq_dataset_id
-                    
-                    tables_result = await session.call_tool(list_tables_tool.name, list_tables_args)
-                    
-                    if not tables_result or not tables_result.content:
-                        return {"datasets": []}
-                    
-                    tables_text = ""
-                    for content in tables_result.content:
-                        if hasattr(content, 'text'):
-                            tables_text += content.text
-                    
-                    dataset_tree = {}
-                    
-                    for line in tables_text.strip().split('\n'):
-                        if not line.strip() or line.startswith('#') or line.startswith('Found'):
-                            continue
-                        
-                        parts = line.strip().split('.')
-                        if len(parts) >= 2:
-                            dataset = parts[0]
-                            table = parts[1]
-                            
-                            if dataset not in dataset_tree:
-                                dataset_tree[dataset] = []
-                            
-                            try:
-                                schema_result = await session.call_tool(
-                                    describe_table_tool.name,
-                                    {"table_id": f"{dataset}.{table}"}
-                                )
-                                
-                                schema_text = ""
-                                for content in schema_result.content:
-                                    if hasattr(content, 'text'):
-                                        schema_text += content.text
-                                
-                                columns = []
-                                for schema_line in schema_text.strip().split('\n'):
-                                    if schema_line.strip() and not schema_line.startswith('Schema') and not schema_line.startswith('Column'):
-                                        column_parts = schema_line.strip().split()
-                                        if len(column_parts) >= 2:
-                                            columns.append({
-                                                "name": column_parts[0],
-                                                "type": column_parts[1],
-                                                "mode": column_parts[2] if len(column_parts) > 2 else "NULLABLE"
-                                            })
-                                
-                                dataset_tree[dataset].append({
-                                    "name": table,
-                                    "columns": columns
+                    for table_ref in tables[:50]:
+                        try:
+                            table = bq_client.get_table(f"{bq_project_id}.{dataset_id}.{table_ref.table_id}")
+                            columns = []
+                            for field in table.schema:
+                                columns.append({
+                                    "name": field.name,
+                                    "type": field.field_type,
+                                    "mode": field.mode or "NULLABLE",
+                                    "description": field.description or ""
                                 })
-                            except Exception as e:
-                                dataset_tree[dataset].append({
-                                    "name": table,
-                                    "error": str(e)
-                                })
-                    
-                    result = []
-                    for dataset_name, tables in dataset_tree.items():
-                        result.append({
-                            "name": dataset_name,
-                            "tables": tables
-                        })
-                    
-                    return {"datasets": result}
+                            
+                            dataset_tree[dataset_id].append({
+                                "name": table_ref.table_id,
+                                "columns": columns,
+                                "num_rows": table.num_rows,
+                                "size_bytes": table.num_bytes
+                            })
+                        except Exception as table_err:
+                            dataset_tree[dataset_id].append({
+                                "name": table_ref.table_id,
+                                "error": str(table_err)
+                            })
+                except Exception as dataset_err:
+                    dataset_tree[dataset_id] = [{
+                        "error": str(dataset_err)
+                    }]
             
-            result = asyncio.run(fetch_schema())
+            result = []
+            for dataset_name, tables in dataset_tree.items():
+                result.append({
+                    "name": dataset_name,
+                    "tables": tables
+                })
             
-            return jsonify({
+            response_data = {
                 "success": True,
-                "schema_tree": result
-            })
+                "schema_tree": {"datasets": result}
+            }
+            print(f"Schema tree response: {json.dumps(response_data, default=str)[:500]}")
+            return jsonify(response_data)
         finally:
-            if temp_file and hasattr(temp_file, 'name') and os.path.exists(temp_file.name):
-                os.unlink(temp_file.name)
+            if temp_file and os.path.exists(temp_file):
+                os.unlink(temp_file)
         
     except Exception as e:
         import traceback
@@ -4445,6 +4615,89 @@ def get_schema_tree(project_id):
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/api/list-datasets', methods=['GET'])
+@login_required
+def list_datasets():
+    """List available BigQuery datasets using service account credentials"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cur.execute('''
+            SELECT bigquery_project_id, service_account_json
+            FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if not project:
+            return jsonify({"error": "No active project found", "datasets": []}), 404
+        
+        service_account_json_path = project['service_account_json']
+        
+        # Get project ID from explicit setting or extract from service account
+        bq_project_id = project['bigquery_project_id']
+        if not bq_project_id and service_account_json_path:
+            bq_project_id = extract_project_id_from_sa_json(service_account_json_path)
+        
+        if not bq_project_id:
+            return jsonify({"error": "BigQuery project ID not configured", "datasets": []}), 400
+        
+        if not service_account_json_path:
+            return jsonify({"error": "Service account not configured", "datasets": []}), 400
+        
+        # Use Google Cloud BigQuery client directly
+        from google.cloud import bigquery
+        from google.oauth2 import service_account
+        
+        temp_file = None
+        try:
+            # Handle file path vs JSON content
+            if os.path.exists(service_account_json_path):
+                credentials = service_account.Credentials.from_service_account_file(
+                    service_account_json_path,
+                    scopes=["https://www.googleapis.com/auth/bigquery.readonly"]
+                )
+            else:
+                # Assume it's JSON content - write to temp file
+                temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+                temp_file.write(service_account_json_path)
+                temp_file.close()
+                credentials = service_account.Credentials.from_service_account_file(
+                    temp_file.name,
+                    scopes=["https://www.googleapis.com/auth/bigquery.readonly"]
+                )
+            
+            client = bigquery.Client(project=bq_project_id, credentials=credentials)
+            
+            datasets = []
+            for dataset in client.list_datasets():
+                datasets.append({
+                    "id": dataset.dataset_id,
+                    "full_id": f"{bq_project_id}.{dataset.dataset_id}",
+                    "friendly_name": dataset.friendly_name or dataset.dataset_id
+                })
+            
+            return jsonify({
+                "success": True,
+                "project_id": bq_project_id,
+                "datasets": datasets
+            })
+        finally:
+            if temp_file and hasattr(temp_file, 'name') and os.path.exists(temp_file.name):
+                os.unlink(temp_file.name)
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "datasets": []
+        }), 500
 
 @app.route("/test")
 def root():
