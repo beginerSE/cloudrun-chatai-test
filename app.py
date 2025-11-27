@@ -105,6 +105,7 @@ def get_db_connection():
     
     return conn
 
+
 # Safe redirect helper
 def is_safe_url(target):
     """Check if the target URL is safe to redirect to"""
@@ -3400,6 +3401,19 @@ def get_api_key():
 def check_env_json():
     """Check if Application Default Credentials (ADC) is available"""
     try:
+        # Check if running in Cloud Run environment
+        # Cloud Run sets K_SERVICE environment variable
+        is_cloud_run = os.environ.get('K_SERVICE') is not None
+        
+        if is_cloud_run:
+            # In Cloud Run, ADC is always available via metadata server
+            # The service account attached to Cloud Run will be used
+            return jsonify({
+                "available": True,
+                "environment": "cloud_run"
+            })
+        
+        # For non-Cloud Run environments, try to get default credentials
         import google.auth
         from google.auth.exceptions import DefaultCredentialsError
         
@@ -3412,9 +3426,11 @@ def check_env_json():
             available = False
         
         return jsonify({
-            "available": available
+            "available": available,
+            "environment": "local"
         })
     except Exception as e:
+        print(f"Error checking ADC availability: {e}")
         return jsonify({"available": False}), 500
 
 @app.route('/api/get-json-file-info')
@@ -4674,8 +4690,27 @@ def get_schema_tree(project_id):
         
     except Exception as e:
         import traceback
+        error_msg = str(e)
+        
+        # Provide user-friendly error messages for common permission issues
+        if "403" in error_msg or "Forbidden" in error_msg or "Access Denied" in error_msg:
+            return jsonify({
+                "error": "BigQuery へのアクセス権限がありません。サービスアカウントに以下の権限が付与されているか確認してください:\n• BigQuery データ閲覧者 (roles/bigquery.dataViewer)\n• BigQuery ジョブユーザー (roles/bigquery.jobUser)",
+                "error_type": "permission_denied"
+            }), 403
+        elif "404" in error_msg or "Not found" in error_msg:
+            return jsonify({
+                "error": "指定されたプロジェクトまたはデータセットが見つかりません。プロジェクトIDが正しいか確認してください。",
+                "error_type": "not_found"
+            }), 404
+        elif "Could not automatically determine credentials" in error_msg or "DefaultCredentialsError" in error_msg:
+            return jsonify({
+                "error": "認証情報が見つかりません。Cloud Run の場合はサービスアカウントがアタッチされているか確認してください。",
+                "error_type": "credentials_not_found"
+            }), 401
+        
         return jsonify({
-            "error": str(e),
+            "error": f"BigQuery エラー: {error_msg}",
             "traceback": traceback.format_exc()
         }), 500
 
@@ -4763,9 +4798,34 @@ def list_datasets():
         
     except Exception as e:
         import traceback
+        error_msg = str(e)
+        
+        # Provide user-friendly error messages for common permission issues
+        if "403" in error_msg or "Forbidden" in error_msg or "Access Denied" in error_msg:
+            return jsonify({
+                "success": False,
+                "error": "BigQuery へのアクセス権限がありません。サービスアカウントに以下の権限が付与されているか確認してください:\n• BigQuery データ閲覧者 (roles/bigquery.dataViewer)\n• BigQuery ジョブユーザー (roles/bigquery.jobUser)",
+                "error_type": "permission_denied",
+                "datasets": []
+            }), 403
+        elif "404" in error_msg or "Not found" in error_msg:
+            return jsonify({
+                "success": False,
+                "error": "指定されたプロジェクトが見つかりません。プロジェクトIDが正しいか確認してください。",
+                "error_type": "not_found",
+                "datasets": []
+            }), 404
+        elif "Could not automatically determine credentials" in error_msg or "DefaultCredentialsError" in error_msg:
+            return jsonify({
+                "success": False,
+                "error": "認証情報が見つかりません。Cloud Run の場合はサービスアカウントがアタッチされているか確認してください。",
+                "error_type": "credentials_not_found",
+                "datasets": []
+            }), 401
+        
         return jsonify({
             "success": False,
-            "error": str(e),
+            "error": f"BigQuery エラー: {error_msg}",
             "datasets": []
         }), 500
 
