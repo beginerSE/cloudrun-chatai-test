@@ -191,16 +191,54 @@ async function handleSubmit(event) {
         let lastReasoningLength = 0;
         let pollingActive = true;
         let reasoningDiv = null;
+        let retryCount = 0;
+        const maxRetries = 3;
         
         while (pollingActive) {
             await new Promise(resolve => setTimeout(resolve, 500)); // Poll every 500ms
             
-            const statusResponse = await fetch(`/api/chat/status/${task_id}`);
-            if (!statusResponse.ok) {
-                throw new Error('Status check failed');
+            let statusResponse;
+            let statusData;
+            
+            try {
+                statusResponse = await fetch(`/api/chat/status/${task_id}`);
+                
+                // Check for authentication error (401)
+                if (statusResponse.status === 401) {
+                    const errorData = await statusResponse.json().catch(() => ({}));
+                    if (errorData.auth_required) {
+                        // Session expired - redirect to login
+                        alert('セッションが期限切れです。再度ログインしてください。');
+                        window.location.href = errorData.redirect || '/login';
+                        return;
+                    }
+                }
+                
+                if (!statusResponse.ok) {
+                    // Network or server error - retry a few times
+                    retryCount++;
+                    if (retryCount >= maxRetries) {
+                        throw new Error('ステータス確認に失敗しました。ページを再読み込みしてください。');
+                    }
+                    console.warn(`Status check failed, retrying (${retryCount}/${maxRetries})...`);
+                    continue;
+                }
+                
+                // Reset retry count on success
+                retryCount = 0;
+                
+                statusData = await statusResponse.json();
+            } catch (fetchError) {
+                // Network error - retry a few times
+                retryCount++;
+                if (retryCount >= maxRetries) {
+                    throw new Error('通信エラーが発生しました。ネットワーク接続を確認してください。');
+                }
+                console.warn(`Network error, retrying (${retryCount}/${maxRetries})...`, fetchError);
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait longer before retry
+                continue;
             }
             
-            const statusData = await statusResponse.json();
             console.log('Status update:', statusData);
             
             // Display new steps
