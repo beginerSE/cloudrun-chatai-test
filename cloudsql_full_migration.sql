@@ -98,6 +98,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_project_memories_unique_key
 ON project_memories(project_id, memory_key);
 
 -- ============================================
+-- 6. CHAT TASKS TABLE (Cloud Run Compatible)
+-- ============================================
+-- Stores running chat task status for Cloud Run compatibility (stateless)
+-- This replaces the in-memory task dictionary to support multiple instances
+CREATE TABLE IF NOT EXISTS chat_tasks (
+    task_id VARCHAR(36) PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    status VARCHAR(20) NOT NULL DEFAULT 'running',
+    steps JSONB DEFAULT '[]'::jsonb,
+    result JSONB,
+    error TEXT,
+    reasoning TEXT DEFAULT '',
+    cancelled BOOLEAN DEFAULT false,
+    session_id INTEGER,
+    traceback TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for chat tasks
+CREATE INDEX IF NOT EXISTS idx_chat_tasks_user_id ON chat_tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_tasks_status ON chat_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_chat_tasks_created_at ON chat_tasks(created_at);
+
+-- ============================================
 -- COMMENTS
 -- ============================================
 COMMENT ON TABLE users IS 'User accounts for authentication';
@@ -105,6 +131,7 @@ COMMENT ON TABLE projects IS 'BigQuery projects with API keys and configuration'
 COMMENT ON TABLE chat_sessions IS 'Chat sessions for organizing conversations';
 COMMENT ON TABLE chat_history IS 'Individual chat messages and AI responses';
 COMMENT ON TABLE project_memories IS 'Persistent memory storage for AI context per project';
+COMMENT ON TABLE chat_tasks IS 'Running chat task status for Cloud Run compatibility (stateless architecture)';
 
 COMMENT ON COLUMN projects.use_env_json IS 'When true, use Application Default Credentials (ADC) instead of uploaded JSON file';
 COMMENT ON COLUMN projects.ai_provider IS 'AI provider to use: openai or gemini';
@@ -112,3 +139,5 @@ COMMENT ON COLUMN projects.original_json_filename IS 'Original filename of uploa
 COMMENT ON COLUMN chat_history.reasoning_process IS 'AI reasoning/thinking process for transparency';
 COMMENT ON COLUMN chat_history.steps_count IS 'Number of steps taken by AI agent';
 COMMENT ON COLUMN chat_history.processing_time IS 'Total processing time in seconds';
+COMMENT ON COLUMN chat_tasks.status IS 'Task status: running, completed, error, cancelled';
+COMMENT ON COLUMN chat_tasks.steps IS 'Array of progress step messages';
