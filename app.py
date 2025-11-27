@@ -59,7 +59,8 @@ from flask.json.provider import DefaultJSONProvider
 class DateTimeJSONProvider(DefaultJSONProvider):
     def default(self, obj):
         if isinstance(obj, datetime):
-            return obj.isoformat()
+            # Add 'Z' suffix to indicate UTC time
+            return obj.isoformat() + 'Z'
         return super().default(obj)
 
 app.json = DateTimeJSONProvider(app)
@@ -162,7 +163,7 @@ def get_active_project_config(user_id):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute('''
-        SELECT openai_api_key, gemini_api_key, ai_provider, bigquery_project_id, bigquery_dataset_id, service_account_json
+        SELECT openai_api_key, gemini_api_key, ai_provider, bigquery_project_id, bigquery_dataset_id, service_account_json, use_env_json
         FROM projects
         WHERE user_id = %s AND is_active = true
         LIMIT 1
@@ -173,11 +174,12 @@ def get_active_project_config(user_id):
     
     if project:
         provider = project['ai_provider'] or 'openai'
-        service_account_json = project['service_account_json'] or GCP_SA_JSON
+        use_adc = project.get('use_env_json', False)
+        service_account_json = project['service_account_json'] if not use_adc else None
         
         # Get project_id: prefer explicit setting, then extract from service account JSON
         project_id = project['bigquery_project_id']
-        if not project_id and service_account_json:
+        if not project_id and service_account_json and not use_adc:
             project_id = extract_project_id_from_sa_json(service_account_json)
         if not project_id:
             project_id = PROJECT_ID
@@ -188,7 +190,8 @@ def get_active_project_config(user_id):
             'provider': provider,
             'project_id': project_id,
             'dataset_id': project['bigquery_dataset_id'] or DEFAULT_DATASET,
-            'service_account_json': service_account_json
+            'service_account_json': service_account_json,
+            'use_adc': use_adc
         }
     else:
         # Fall back to environment variables
@@ -198,7 +201,8 @@ def get_active_project_config(user_id):
             'provider': 'openai',
             'project_id': PROJECT_ID,
             'dataset_id': DEFAULT_DATASET,
-            'service_account_json': GCP_SA_JSON
+            'service_account_json': GCP_SA_JSON,
+            'use_adc': False
         }
 
 async def extract_payload_text(res) -> str:
@@ -695,13 +699,18 @@ def build_gemini_tools_schema() -> List[Dict[str, Any]]:
 async def run_agent(user_question: str, conversation_history: List[Dict[str, str]], 
                     api_key: str = None, project_id: str = None, dataset_id: str = None, 
                     service_account_json: str = None, project_db_id: int = None, user_id: int = None,
-                    provider: str = 'openai', gemini_api_key: str = None) -> Dict[str, Any]:
+                    provider: str = 'openai', gemini_api_key: str = None, use_adc: bool = False) -> Dict[str, Any]:
     """Main agent logic with MCP and OpenAI/Gemini"""
     # Use provided parameters or fall back to global variables
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
     dataset_id = dataset_id or DEFAULT_DATASET
-    service_account_json = service_account_json or GCP_SA_JSON
+    
+    # Only use service_account_json if not using ADC
+    if not use_adc:
+        service_account_json = service_account_json or GCP_SA_JSON
+    else:
+        service_account_json = None
     
     # Load project memories if project_db_id is provided
     project_memories = []
@@ -722,7 +731,9 @@ async def run_agent(user_question: str, conversation_history: List[Dict[str, str
             print(f"Warning: Failed to load project memories: {e}")
     
     env = os.environ.copy()
-    if service_account_json:
+    # Only set GOOGLE_APPLICATION_CREDENTIALS if not using ADC
+    # For ADC (Cloud Run), credentials are automatically available
+    if service_account_json and not use_adc:
         env["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_json
     
     server_params = StdioServerParameters(
@@ -1161,13 +1172,18 @@ Think step-by-step and show your reasoning process."""}
 async def run_agent_streaming(user_question: str, conversation_history: List[Dict[str, str]], msg_queue: queue.Queue, 
                               api_key: str = None, project_id: str = None, dataset_id: str = None, 
                               service_account_json: str = None, project_db_id: int = None, user_id: int = None,
-                              provider: str = 'openai', gemini_api_key: str = None) -> Dict[str, Any]:
+                              provider: str = 'openai', gemini_api_key: str = None, use_adc: bool = False) -> Dict[str, Any]:
     """Main agent logic with MCP and OpenAI/Gemini - with streaming progress"""
     # Use provided parameters or fall back to global variables
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
     dataset_id = dataset_id or DEFAULT_DATASET
-    service_account_json = service_account_json or GCP_SA_JSON
+    
+    # Only use service_account_json if not using ADC
+    if not use_adc:
+        service_account_json = service_account_json or GCP_SA_JSON
+    else:
+        service_account_json = None
     
     # Load project memories if project_db_id is provided
     project_memories = []
@@ -1188,7 +1204,8 @@ async def run_agent_streaming(user_question: str, conversation_history: List[Dic
             print(f"Warning: Failed to load project memories: {e}")
     
     env = os.environ.copy()
-    if service_account_json:
+    # Only set GOOGLE_APPLICATION_CREDENTIALS if not using ADC
+    if service_account_json and not use_adc:
         env["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_json
     
     server_params = StdioServerParameters(
@@ -1927,7 +1944,7 @@ Think step-by-step and show your reasoning process."""}
 async def run_agent_with_steps(task_id: str, user_question: str, conversation_history: List[Dict[str, str]], 
                               api_key: str = None, project_id: str = None, dataset_id: str = None, 
                               service_account_json: str = None, project_db_id: int = None, user_id: int = None,
-                              provider: str = 'openai', gemini_api_key: str = None) -> Dict[str, Any]:
+                              provider: str = 'openai', gemini_api_key: str = None, use_adc: bool = False) -> Dict[str, Any]:
     """Main agent logic with progress tracking via task_id - supports OpenAI and Gemini"""
     import time
     
@@ -1955,7 +1972,12 @@ async def run_agent_with_steps(task_id: str, user_question: str, conversation_hi
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
     dataset_id = dataset_id or DEFAULT_DATASET
-    service_account_json = service_account_json or GCP_SA_JSON
+    
+    # Only use service_account_json if not using ADC
+    if not use_adc:
+        service_account_json = service_account_json or GCP_SA_JSON
+    else:
+        service_account_json = None
     
     # Load project memories if project_db_id is provided
     project_memories = []
@@ -1976,7 +1998,8 @@ async def run_agent_with_steps(task_id: str, user_question: str, conversation_hi
             print(f"Warning: Failed to load project memories: {e}")
     
     env = os.environ.copy()
-    if service_account_json:
+    # Only set GOOGLE_APPLICATION_CREDENTIALS if not using ADC
+    if service_account_json and not use_adc:
         env["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_json
     
     server_params = StdioServerParameters(
@@ -2676,7 +2699,7 @@ def signup():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        email = request.form.get('email', '')
+        email = request.form.get('email', '').strip() or None  # 空文字列はNULLに変換
         
         # Validation
         if not username or not password:
@@ -2699,16 +2722,40 @@ def signup():
             conn.close()
             return render_template('signup.html')
         
+        # Check if email exists
+        if email:
+            cur.execute('SELECT id FROM users WHERE email = %s', (email,))
+            existing_email = cur.fetchone()
+            
+            if existing_email:
+                flash('このメールアドレスは既に使用されています。', 'error')
+                cur.close()
+                conn.close()
+                return render_template('signup.html')
+        
         # Hash password
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
         # Insert new user
-        cur.execute(
-            'INSERT INTO users (username, password_hash, email) VALUES (%s, %s, %s) RETURNING id',
-            (username, password_hash, email)
-        )
-        user_id = cur.fetchone()['id']
-        conn.commit()
+        try:
+            cur.execute(
+                'INSERT INTO users (username, password_hash, email) VALUES (%s, %s, %s) RETURNING id',
+                (username, password_hash, email)
+            )
+            user_id = cur.fetchone()['id']
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            if 'users_email_key' in str(e):
+                flash('このメールアドレスは既に使用されています。', 'error')
+            elif 'users_username_key' in str(e):
+                flash('このユーザー名は既に使用されています。', 'error')
+            else:
+                flash('アカウント作成中にエラーが発生しました。', 'error')
+            cur.close()
+            conn.close()
+            return render_template('signup.html')
+        
         cur.close()
         conn.close()
         
@@ -2914,7 +2961,8 @@ def chat():
                     project_db_id=active_project_id,
                     user_id=user_id,
                     provider=provider,
-                    gemini_api_key=config.get('gemini_api_key')
+                    gemini_api_key=config.get('gemini_api_key'),
+                    use_adc=config.get('use_adc', False)
                 ))
                 
                 # Save to database
@@ -3350,11 +3398,18 @@ def get_api_key():
 @app.route('/api/check-env-json')
 @login_required
 def check_env_json():
-    """Check if environment variable for default GCP SA JSON is available"""
+    """Check if Application Default Credentials (ADC) is available"""
     try:
-        # Check if GCP_SA_JSON environment variable is set
-        env_json = os.getenv('GCP_SA_JSON', '')
-        available = bool(env_json and len(env_json) > 0)
+        import google.auth
+        from google.auth.exceptions import DefaultCredentialsError
+        
+        try:
+            credentials, project = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/bigquery.readonly"]
+            )
+            available = True
+        except DefaultCredentialsError:
+            available = False
         
         return jsonify({
             "available": available
@@ -3381,12 +3436,12 @@ def get_json_file_info():
         if not project:
             return jsonify({"exists": False, "use_env": False})
         
-        # Check if using environment variable
+        # Check if using ADC (Application Default Credentials)
         if project.get('use_env_json'):
             return jsonify({
                 "exists": True,
                 "use_env": True,
-                "filename": "環境変数（デフォルト設定）"
+                "filename": "Cloud Run サービスアカウント（ADC）"
             })
         
         json_path = project['service_account_json']
@@ -4504,13 +4559,13 @@ def delete_memory(memory_id):
 @app.route('/api/projects/<int:project_id>/schema-tree', methods=['GET'])
 @login_required
 def get_schema_tree(project_id):
-    """Get BigQuery schema tree for a project using BigQuery client library"""
+    """Get BigQuery schema tree for a project using BigQuery client library or ADC"""
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
         cur.execute('''
-            SELECT bigquery_project_id, bigquery_dataset_id, service_account_json
+            SELECT bigquery_project_id, bigquery_dataset_id, service_account_json, use_env_json
             FROM projects
             WHERE id = %s AND user_id = %s
         ''', (project_id, current_user.id))
@@ -4528,30 +4583,36 @@ def get_schema_tree(project_id):
         bq_project_id = project['bigquery_project_id']
         bq_dataset_id = project['bigquery_dataset_id']
         service_account_json = project['service_account_json']
+        use_adc = project.get('use_env_json', False)
         
         temp_file = None
         try:
             from google.cloud import bigquery
             from google.oauth2 import service_account
+            import google.auth
             
             bq_client = None
             
-            credentials_file = f"gcp_credentials_project_{project_id}.json"
-            bq_client = bigquery.Client()
-
-            # 20251127本番環境向けにコメントアウト（なにかあったらこれをもとに戻す）
-            # if os.path.exists(credentials_file):
-            #     credentials = service_account.Credentials.from_service_account_file(credentials_file)
-            #     bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
-            # elif service_account_json:
-            #     try:
-            #         creds_data = json.loads(service_account_json)
-            #         credentials = service_account.Credentials.from_service_account_info(creds_data)
-            #         bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
-            #     except json.JSONDecodeError:
-            #         return jsonify({"error": "Invalid service account JSON format"}), 400
-            # else:
-            #     bq_client = bigquery.Client(project=bq_project_id)
+            if use_adc:
+                # Use Application Default Credentials (ADC) for Cloud Run
+                credentials, adc_project = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/bigquery.readonly"]
+                )
+                bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
+            else:
+                credentials_file = f"gcp_credentials_project_{project_id}.json"
+                if os.path.exists(credentials_file):
+                    credentials = service_account.Credentials.from_service_account_file(credentials_file)
+                    bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
+                elif service_account_json:
+                    try:
+                        creds_data = json.loads(service_account_json)
+                        credentials = service_account.Credentials.from_service_account_info(creds_data)
+                        bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
+                    except json.JSONDecodeError:
+                        return jsonify({"error": "Invalid service account JSON format"}), 400
+                else:
+                    bq_client = bigquery.Client(project=bq_project_id)
             
             dataset_tree = {}
             
@@ -4621,13 +4682,13 @@ def get_schema_tree(project_id):
 @app.route('/api/list-datasets', methods=['GET'])
 @login_required
 def list_datasets():
-    """List available BigQuery datasets using service account credentials"""
+    """List available BigQuery datasets using service account credentials or ADC"""
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
         cur.execute('''
-            SELECT bigquery_project_id, service_account_json
+            SELECT bigquery_project_id, service_account_json, use_env_json
             FROM projects
             WHERE user_id = %s AND is_active = true
             LIMIT 1
@@ -4640,27 +4701,33 @@ def list_datasets():
         if not project:
             return jsonify({"error": "No active project found", "datasets": []}), 404
         
+        use_adc = project.get('use_env_json', False)
         service_account_json_path = project['service_account_json']
         
         # Get project ID from explicit setting or extract from service account
         bq_project_id = project['bigquery_project_id']
-        if not bq_project_id and service_account_json_path:
+        if not bq_project_id and service_account_json_path and not use_adc:
             bq_project_id = extract_project_id_from_sa_json(service_account_json_path)
         
         if not bq_project_id:
             return jsonify({"error": "BigQuery project ID not configured", "datasets": []}), 400
         
-        if not service_account_json_path:
+        if not use_adc and not service_account_json_path:
             return jsonify({"error": "Service account not configured", "datasets": []}), 400
         
         # Use Google Cloud BigQuery client directly
         from google.cloud import bigquery
         from google.oauth2 import service_account
+        import google.auth
         
         temp_file = None
         try:
-            # Handle file path vs JSON content
-            if os.path.exists(service_account_json_path):
+            if use_adc:
+                # Use Application Default Credentials (ADC) for Cloud Run
+                credentials, adc_project = google.auth.default(
+                    scopes=["https://www.googleapis.com/auth/bigquery.readonly"]
+                )
+            elif os.path.exists(service_account_json_path):
                 credentials = service_account.Credentials.from_service_account_file(
                     service_account_json_path,
                     scopes=["https://www.googleapis.com/auth/bigquery.readonly"]
