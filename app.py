@@ -3221,7 +3221,7 @@ def save_settings():
             
             # Handle GCP JSON authentication
             json_source = request.form.get('json_source', 'upload')
-            if json_source == 'env':
+            if json_source == 'env' or json_source == 'adc':
                 # Use environment variable
                 cur.execute('''
                     UPDATE projects 
@@ -3294,7 +3294,7 @@ def save_settings():
         
         # Handle GCP JSON authentication
         json_source = request.form.get('json_source', 'upload')
-        if json_source == 'env':
+        if json_source == 'env' or json_source == 'adc':
             # Use environment variable
             update_fields.append('use_env_json = %s')
             params.append(True)
