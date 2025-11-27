@@ -3126,13 +3126,16 @@ def get_settings():
                    openai_api_key IS NOT NULL as has_api_key,
                    gemini_api_key IS NOT NULL as has_gemini_key,
                    service_account_json,
-                   service_account_json IS NOT NULL as has_service_account,
+                   use_env_json,
+                   (service_account_json IS NOT NULL OR use_env_json = true) as has_service_account,
                    ai_provider
             FROM projects
             WHERE user_id = %s AND is_active = true
+            ORDER BY updated_at DESC
             LIMIT 1
         ''', (current_user.id,))
         project = cur.fetchone()
+        print(f"DEBUG get_settings: active project={project}")
         cur.close()
         conn.close()
         
@@ -3187,9 +3190,11 @@ def save_settings():
         cur.execute('''
             SELECT id FROM projects
             WHERE user_id = %s AND is_active = true
+            ORDER BY updated_at DESC
             LIMIT 1
         ''', (current_user.id,))
         project = cur.fetchone()
+        print(f"DEBUG save_settings: active project={project}")
         
         # Track if this is a new project creation
         is_new_project = False
@@ -3221,8 +3226,8 @@ def save_settings():
             
             # Handle GCP JSON authentication
             json_source = request.form.get('json_source', 'upload')
-            if json_source == 'env' or json_source == 'adc':
-                # Use environment variable
+            if json_source == 'adc' or json_source == 'env':
+                # Use Application Default Credentials (ADC)
                 cur.execute('''
                     UPDATE projects 
                     SET use_env_json = true, service_account_json = NULL, original_json_filename = NULL, updated_at = CURRENT_TIMESTAMP
@@ -3294,8 +3299,8 @@ def save_settings():
         
         # Handle GCP JSON authentication
         json_source = request.form.get('json_source', 'upload')
-        if json_source == 'env' or json_source == 'adc':
-            # Use environment variable
+        if json_source == 'adc' or json_source == 'env':
+            # Use Application Default Credentials (ADC)
             update_fields.append('use_env_json = %s')
             params.append(True)
             update_fields.append('service_account_json = %s')
@@ -3441,11 +3446,13 @@ def get_json_file_info():
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute('''
-            SELECT service_account_json, use_env_json, original_json_filename FROM projects
+            SELECT id, service_account_json, use_env_json, original_json_filename FROM projects
             WHERE user_id = %s AND is_active = true
+            ORDER BY updated_at DESC
             LIMIT 1
         ''', (current_user.id,))
         project = cur.fetchone()
+        print(f"DEBUG get-json-file-info: project={project}")
         cur.close()
         conn.close()
         
@@ -3809,7 +3816,8 @@ def get_project(project_id):
             SELECT id, name, description, bigquery_project_id, bigquery_dataset_id,
                    is_active, created_at, updated_at,
                    openai_api_key IS NOT NULL as has_api_key,
-                   service_account_json IS NOT NULL as has_service_account
+                   use_env_json,
+                   (service_account_json IS NOT NULL OR use_env_json = true) as has_service_account
             FROM projects
             WHERE id = %s AND user_id = %s
         ''', (project_id, current_user.id))
