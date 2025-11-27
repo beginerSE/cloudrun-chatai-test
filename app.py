@@ -71,9 +71,153 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'このページにアクセスするにはログインが必要です。'
 
+
 # Progress tracking for chat tasks
-chat_tasks = {}  # {task_id: {'status': 'running'|'completed'|'error', 'steps': [], 'result': {}, 'error': ''}}
-task_lock = threading.Lock()
+# chat_tasks = {}  # {task_id: {'status': 'running'|'completed'|'error', 'steps': [], 'result': {}, 'error': ''}}
+# task_lock = threading.Lock()
+
+
+# Progress tracking for chat tasks - now using PostgreSQL for Cloud Run compatibility
+# Legacy in-memory dict removed - all task state is stored in database
+
+def create_chat_task(task_id: str, user_id: int, project_id: int) -> bool:
+    """Create a new chat task in the database"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO chat_tasks (task_id, user_id, project_id, status, steps, reasoning)
+            VALUES (%s, %s, %s, 'running', '[]'::jsonb, '')
+        ''', (task_id, user_id, project_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error creating chat task: {e}")
+        return False
+
+def get_chat_task(task_id: str) -> dict:
+    """Get chat task from database"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT task_id, user_id, project_id, status, steps, result, error, 
+                   reasoning, cancelled, session_id, traceback, created_at, updated_at
+            FROM chat_tasks WHERE task_id = %s
+        ''', (task_id,))
+        task = cur.fetchone()
+        cur.close()
+        conn.close()
+        return dict(task) if task else None
+    except Exception as e:
+        print(f"Error getting chat task: {e}")
+        return None
+
+def update_chat_task(task_id: str, **kwargs) -> bool:
+    """Update chat task fields in database"""
+    if not kwargs:
+        return True
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Build dynamic UPDATE query
+        set_clauses = []
+        params = []
+        for key, value in kwargs.items():
+            if key in ['steps', 'result']:
+                set_clauses.append(f"{key} = %s::jsonb")
+                params.append(json.dumps(value) if not isinstance(value, str) else value)
+            else:
+                set_clauses.append(f"{key} = %s")
+                params.append(value)
+        
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(task_id)
+        
+        query = f"UPDATE chat_tasks SET {', '.join(set_clauses)} WHERE task_id = %s"
+        cur.execute(query, params)
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error updating chat task: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def add_chat_task_step(task_id: str, step: str) -> bool:
+    """Add a step to chat task"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('''
+            UPDATE chat_tasks 
+            SET steps = steps || %s::jsonb, updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s
+        ''', (json.dumps([step]), task_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error adding chat task step: {e}")
+        return False
+
+def append_chat_task_reasoning(task_id: str, text: str) -> bool:
+    """Append text to chat task reasoning"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('''
+            UPDATE chat_tasks 
+            SET reasoning = COALESCE(reasoning, '') || %s, updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = %s
+        ''', (text, task_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error appending chat task reasoning: {e}")
+        return False
+
+def is_chat_task_cancelled(task_id: str) -> bool:
+    """Check if chat task is cancelled"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT cancelled FROM chat_tasks WHERE task_id = %s', (task_id,))
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        return result[0] if result else False
+    except Exception as e:
+        print(f"Error checking chat task cancelled: {e}")
+        return False
+
+def cleanup_old_chat_tasks(hours: int = 24) -> int:
+    """Clean up old chat tasks (older than specified hours)"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('''
+            DELETE FROM chat_tasks 
+            WHERE created_at < NOW() - INTERVAL '%s hours'
+        ''', (hours,))
+        deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return deleted
+    except Exception as e:
+        print(f"Error cleaning up old chat tasks: {e}")
+        return 0
+
+
 
 # Database connection
 # def get_db_connection():
@@ -159,6 +303,18 @@ def extract_project_id_from_sa_json(service_account_json_path: str) -> str:
         print(f"Error extracting project_id from service account JSON: {e}")
         return None
 
+def get_adc_project_id() -> str:
+    """Get project ID from Application Default Credentials (ADC)"""
+    try:
+        import google.auth
+        credentials, project = google.auth.default()
+        if project:
+            print(f"DEBUG: ADC project_id detected: {project}")
+            return project
+    except Exception as e:
+        print(f"Error getting ADC project_id: {e}")
+    return None
+
 def get_active_project_config(user_id):
     """Get configuration from active project or fall back to env variables"""
     conn = get_db_connection()
@@ -178,10 +334,13 @@ def get_active_project_config(user_id):
         use_adc = project.get('use_env_json', False)
         service_account_json = project['service_account_json'] if not use_adc else None
         
-        # Get project_id: prefer explicit setting, then extract from service account JSON
+        # Get project_id: prefer explicit setting, then extract from service account JSON, then ADC
         project_id = project['bigquery_project_id']
         if not project_id and service_account_json and not use_adc:
             project_id = extract_project_id_from_sa_json(service_account_json)
+        if not project_id and use_adc:
+            # Try to get project ID from ADC (Cloud Run automatically provides this)
+            project_id = get_adc_project_id()
         if not project_id:
             project_id = PROJECT_ID
         
@@ -1952,33 +2111,36 @@ async def run_agent_with_steps(task_id: str, user_question: str, conversation_hi
     start_time = time.time()
     
     def add_step(message: str):
-        """Helper to add step to task"""
-        with task_lock:
-            if task_id in chat_tasks:
-                chat_tasks[task_id]['steps'].append(message)
+        """Helper to add step to task - now uses database"""
+        add_chat_task_step(task_id, message)
     
     def add_reasoning(text: str):
-        """Helper to add reasoning content to task"""
-        with task_lock:
-            if task_id in chat_tasks:
-                chat_tasks[task_id]['reasoning'] += text
+        """Helper to add reasoning content to task - now uses database"""
+        append_chat_task_reasoning(task_id, text)
     
     def is_cancelled():
-        """Check if task has been cancelled"""
-        with task_lock:
-            if task_id in chat_tasks:
-                return chat_tasks[task_id].get('cancelled', False)
-        return False
+        """Check if task has been cancelled - now uses database"""
+        return is_chat_task_cancelled(task_id)
     
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
     dataset_id = dataset_id or DEFAULT_DATASET
+    
+    # Debug logging for troubleshooting
+    print(f"DEBUG run_agent_with_steps: use_adc={use_adc}, project_id={project_id}, dataset_id={dataset_id}")
+    
+    # Validate project_id early
+    if not project_id or project_id == "your-project-id":
+        error_msg = "BigQuery プロジェクトIDが設定されていません。設定画面でプロジェクトIDを設定してください。"
+        add_step(f"❌ エラー: {error_msg}")
+        return {"error": error_msg, "steps": [f"❌ エラー: {error_msg}"]}
     
     # Only use service_account_json if not using ADC
     if not use_adc:
         service_account_json = service_account_json or GCP_SA_JSON
     else:
         service_account_json = None
+        print(f"DEBUG: Using ADC (Application Default Credentials) for BigQuery authentication")
     
     # Load project memories if project_db_id is provided
     project_memories = []
@@ -2002,6 +2164,8 @@ async def run_agent_with_steps(task_id: str, user_question: str, conversation_hi
     # Only set GOOGLE_APPLICATION_CREDENTIALS if not using ADC
     if service_account_json and not use_adc:
         env["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_json
+    
+    print(f"DEBUG: Starting MCP server with project={project_id}, location={LOCATION}, use_adc={use_adc}")
     
     server_params = StdioServerParameters(
         command="mcp-server-bigquery",
@@ -2939,16 +3103,10 @@ def chat():
         import uuid
         task_id = str(uuid.uuid4())
         
-        # Initialize task state
-        with task_lock:
-            chat_tasks[task_id] = {
-                'status': 'running',
-                'steps': ['🔧 処理を開始しました...'],
-                'result': None,
-                'error': None,
-                'reasoning': '',
-                'cancelled': False
-            }
+        # Initialize task state in database (Cloud Run compatible)
+        if not create_chat_task(task_id, user_id, active_project_id):
+            return jsonify({"error": "Failed to create task"}), 500
+        add_chat_task_step(task_id, '🔧 処理を開始しました...')
         
         # Run task in background thread
         def run_task():
@@ -3011,21 +3169,25 @@ def chat():
                     cur.close()
                     conn.close()
                 
-                with task_lock:
-                    chat_tasks[task_id]['status'] = 'completed'
-                    chat_tasks[task_id]['result'] = result
-                    chat_tasks[task_id]['session_id'] = session_id
-                    chat_tasks[task_id]['reasoning'] = result.get('reasoning', '')
+                # Update task status in database (Cloud Run compatible)
+                update_chat_task(task_id, 
+                    status='completed',
+                    result=result,
+                    session_id=session_id,
+                    reasoning=result.get('reasoning', '')
+                )
                     
             except Exception as e:
                 import traceback
                 error_traceback = traceback.format_exc()
                 print(f"ERROR in run_task: {error_traceback}", flush=True)
-                with task_lock:
-                    chat_tasks[task_id]['status'] = 'error'
-                    chat_tasks[task_id]['error'] = str(e)
-                    chat_tasks[task_id]['steps'].append(f"❌ エラー: {str(e)}")
-                    chat_tasks[task_id]['traceback'] = error_traceback
+                # Update task error status in database (Cloud Run compatible)
+                add_chat_task_step(task_id, f"❌ エラー: {str(e)}")
+                update_chat_task(task_id,
+                    status='error',
+                    error=str(e),
+                    traceback=error_traceback
+                )
         
         thread = threading.Thread(target=run_task)
         thread.daemon = True
@@ -3046,39 +3208,36 @@ def chat():
 @app.route('/api/chat/status/<task_id>', methods=['GET'])
 @login_required
 def chat_status(task_id):
-    """Get chat task status and progress"""
-    with task_lock:
-        task = chat_tasks.get(task_id)
-        if not task:
-            return jsonify({"error": "Task not found"}), 404
-        
-        return jsonify({
-            "status": task['status'],
-            "steps": task['steps'],
-            "result": task['result'],
-            "error": task['error'],
-            "session_id": task.get('session_id'),
-            "reasoning": task.get('reasoning', ''),
-            "cancelled": task.get('cancelled', False)
-        })
+    """Get chat task status and progress - now uses database for Cloud Run compatibility"""
+    task = get_chat_task(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    
+    return jsonify({
+        "status": task['status'],
+        "steps": task['steps'] if task['steps'] else [],
+        "result": task['result'],
+        "error": task['error'],
+        "session_id": task.get('session_id'),
+        "reasoning": task.get('reasoning', ''),
+        "cancelled": task.get('cancelled', False)
+    })
 
 @app.route('/api/chat/cancel/<task_id>', methods=['POST'])
 @login_required
-def cancel_chat_task(task_id):
-    """Cancel a running chat task"""
-    with task_lock:
-        task = chat_tasks.get(task_id)
-        if not task:
-            return jsonify({"error": "Task not found"}), 404
-        
-        if task['status'] != 'running':
-            return jsonify({"error": "Task is not running"}), 400
-        
-        task['cancelled'] = True
-        task['status'] = 'cancelled'
-        task['steps'].append('⛔ 処理がキャンセルされました')
-        
-        return jsonify({"success": True, "message": "Task cancelled"})
+def cancel_chat_task_endpoint(task_id):
+    """Cancel a running chat task - now uses database for Cloud Run compatibility"""
+    task = get_chat_task(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    
+    if task['status'] != 'running':
+        return jsonify({"error": "Task is not running"}), 400
+    
+    add_chat_task_step(task_id, '⛔ 処理がキャンセルされました')
+    update_chat_task(task_id, cancelled=True, status='cancelled')
+    
+    return jsonify({"success": True, "message": "Task cancelled"})
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -3307,19 +3466,24 @@ def save_settings():
             params.append(None)
             update_fields.append('original_json_filename = %s')
             params.append(None)
-        elif 'gcp_json' in request.files:
-            json_file = request.files['gcp_json']
-            if json_file.filename:
-                # Save the JSON file with project-specific name
-                original_filename = json_file.filename
-                json_path = os.path.join(os.getcwd(), f'gcp_credentials_project_{project_id}.json')
-                json_file.save(json_path)
-                update_fields.append('service_account_json = %s')
-                params.append(json_path)
-                update_fields.append('original_json_filename = %s')
-                params.append(original_filename)
-                update_fields.append('use_env_json = %s')
-                params.append(False)
+        elif json_source == 'upload':
+            # User selected to use uploaded JSON file (not ADC)
+            # Always set use_env_json to False when upload is selected
+            update_fields.append('use_env_json = %s')
+            params.append(False)
+            
+            # If a new file was uploaded, save it
+            if 'gcp_json' in request.files:
+                json_file = request.files['gcp_json']
+                if json_file.filename:
+                    # Save the JSON file with project-specific name
+                    original_filename = json_file.filename
+                    json_path = os.path.join(os.getcwd(), f'gcp_credentials_project_{project_id}.json')
+                    json_file.save(json_path)
+                    update_fields.append('service_account_json = %s')
+                    params.append(json_path)
+                    update_fields.append('original_json_filename = %s')
+                    params.append(original_filename)
         
         if not update_fields:
             cur.close()
