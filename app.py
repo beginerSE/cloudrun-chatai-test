@@ -360,23 +360,29 @@ def get_active_project_config(user_id):
         if not project_id:
             project_id = PROJECT_ID
         
+        # dataset_id: empty string or placeholder means not set
+        dataset_id = project['bigquery_dataset_id']
+        if not dataset_id or dataset_id == 'your_dataset':
+            dataset_id = None
+        
         return {
             'api_key': project['openai_api_key'] or OPENAI_API_KEY,
             'gemini_api_key': project['gemini_api_key'],
             'provider': provider,
             'project_id': project_id,
-            'dataset_id': project['bigquery_dataset_id'] or DEFAULT_DATASET,
+            'dataset_id': dataset_id,
             'service_account_json': service_account_json,
             'use_adc': use_adc
         }
     else:
         # Fall back to environment variables
+        env_dataset = DEFAULT_DATASET if DEFAULT_DATASET != 'your_dataset' else None
         return {
             'api_key': OPENAI_API_KEY,
             'gemini_api_key': None,
             'provider': 'openai',
             'project_id': PROJECT_ID,
-            'dataset_id': DEFAULT_DATASET,
+            'dataset_id': env_dataset,
             'service_account_json': GCP_SA_JSON,
             'use_adc': False
         }
@@ -880,7 +886,7 @@ async def run_agent(user_question: str, conversation_history: List[Dict[str, str
     # Use provided parameters or fall back to global variables
     api_key = api_key or OPENAI_API_KEY
     project_id = project_id or PROJECT_ID
-    dataset_id = dataset_id or DEFAULT_DATASET
+    # dataset_id can be None - AI will discover tables dynamically
     
     # Only use service_account_json if not using ADC
     if not use_adc:
@@ -938,12 +944,18 @@ async def run_agent(user_question: str, conversation_history: List[Dict[str, str
             for mem in project_memories:
                 memory_section += f"### {mem['memory_key']}\n{mem['memory_value']}\n\n"
         
+        # Build dataset info section
+        if dataset_id:
+            dataset_info = f"- Default Dataset: {dataset_id}"
+        else:
+            dataset_info = "- Default Dataset: (Not set - use list_tables to discover available datasets and tables)"
+        
         messages = [
             {"role": "system", "content": f"""You are an expert BigQuery data analyst assistant with deep knowledge of SQL optimization and data analysis.
 
 ## ENVIRONMENT
 - BigQuery Project: {project_id}
-- Default Dataset: {dataset_id}
+{dataset_info}
 {memory_section}
 ## STEP-BY-STEP REASONING FRAMEWORK
 Follow this systematic approach for every user query:
@@ -1410,12 +1422,18 @@ async def run_agent_streaming(user_question: str, conversation_history: List[Dic
             for mem in project_memories:
                 memory_section += f"### {mem['memory_key']}\n{mem['memory_value']}\n\n"
         
+        # Build dataset info section
+        if dataset_id:
+            dataset_info = f"- Default Dataset: {dataset_id}"
+        else:
+            dataset_info = "- Default Dataset: (Not set - use list_tables to discover available datasets and tables)"
+        
         messages = [
             {"role": "system", "content": f"""You are an expert BigQuery data analyst assistant with deep knowledge of SQL optimization and data analysis.
 
 ## ENVIRONMENT
 - BigQuery Project: {project_id}
-- Default Dataset: {dataset_id}
+{dataset_info}
 {memory_section}
 ## STEP-BY-STEP REASONING FRAMEWORK
 Follow this systematic approach for every user query:
@@ -2211,12 +2229,18 @@ async def run_agent_with_steps(task_id: str, user_question: str, conversation_hi
             for mem in project_memories:
                 memory_section += f"### {mem['memory_key']}\n{mem['memory_value']}\n\n"
         
+        # Build dataset info section
+        if dataset_id:
+            dataset_info = f"- Default Dataset: {dataset_id}"
+        else:
+            dataset_info = "- Default Dataset: (Not set - use list_tables to discover available datasets and tables)"
+        
         messages = [
             {"role": "system", "content": f"""You are an expert BigQuery data analyst assistant with deep knowledge of SQL optimization and data analysis.
 
 ## ENVIRONMENT
 - BigQuery Project: {project_id}
-- Default Dataset: {dataset_id}
+{dataset_info}
 {memory_section}
 ## STEP-BY-STEP REASONING FRAMEWORK
 Follow this systematic approach for every user query:
@@ -3829,6 +3853,162 @@ def test_connection():
     except Exception as e:
         import traceback
         return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/api/test-service-account', methods=['POST'])
+@login_required
+def test_service_account():
+    """Test service account connection and get details (ADC or JSON file)"""
+    try:
+        from google.cloud import bigquery
+        from google.oauth2 import service_account
+        import google.auth
+        
+        # Get active project configuration
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('''
+            SELECT bigquery_project_id, service_account_json, use_env_json
+            FROM projects
+            WHERE user_id = %s AND is_active = true
+            LIMIT 1
+        ''', (current_user.id,))
+        project = cur.fetchone()
+        cur.close()
+        conn.close()
+        
+        if not project:
+            return jsonify({
+                "success": False,
+                "error": "アクティブなプロジェクトが選択されていません"
+            }), 404
+        
+        use_adc = project.get('use_env_json', False)
+        service_account_json = project.get('service_account_json')
+        bq_project_id = project.get('bigquery_project_id')
+        
+        service_account_email = None
+        auth_method = None
+        project_id_from_credentials = None
+        bq_permissions = []
+        datasets_accessible = []
+        
+        try:
+            if use_adc:
+                # Test ADC (Application Default Credentials)
+                auth_method = "ADC (Application Default Credentials)"
+                credentials, detected_project = google.auth.default(
+                    scopes=['https://www.googleapis.com/auth/bigquery']
+                )
+                project_id_from_credentials = detected_project
+                
+                # Get service account email from ADC
+                if hasattr(credentials, 'service_account_email'):
+                    service_account_email = credentials.service_account_email
+                elif hasattr(credentials, '_service_account_email'):
+                    service_account_email = credentials._service_account_email
+                else:
+                    # Try to get from token info
+                    try:
+                        from google.auth.transport import requests as google_requests
+                        credentials.refresh(google_requests.Request())
+                        if hasattr(credentials, 'service_account_email'):
+                            service_account_email = credentials.service_account_email
+                    except:
+                        service_account_email = "(ADC経由 - サービスアカウント名を取得できません)"
+                
+                # Create BigQuery client with ADC
+                client = bigquery.Client(project=bq_project_id or detected_project)
+                
+            else:
+                # Test JSON file credentials
+                auth_method = "サービスアカウントJSON"
+                
+                if not service_account_json:
+                    return jsonify({
+                        "success": False,
+                        "error": "サービスアカウントJSONファイルが設定されていません"
+                    }), 400
+                
+                if not os.path.exists(service_account_json):
+                    return jsonify({
+                        "success": False,
+                        "error": "サービスアカウントJSONファイルが見つかりません"
+                    }), 400
+                
+                # Load credentials from JSON file
+                credentials = service_account.Credentials.from_service_account_file(
+                    service_account_json,
+                    scopes=['https://www.googleapis.com/auth/bigquery']
+                )
+                service_account_email = credentials.service_account_email
+                project_id_from_credentials = credentials.project_id
+                
+                # Create BigQuery client with JSON credentials
+                client = bigquery.Client(
+                    project=bq_project_id or project_id_from_credentials,
+                    credentials=credentials
+                )
+            
+            # Test BigQuery access by listing datasets
+            try:
+                datasets = list(client.list_datasets(max_results=5))
+                for ds in datasets:
+                    datasets_accessible.append(ds.dataset_id)
+                bq_permissions.append("bigquery.datasets.get")
+                bq_permissions.append("bigquery.datasets.list")
+            except Exception as ds_error:
+                error_str = str(ds_error)
+                if "403" in error_str or "Permission" in error_str:
+                    return jsonify({
+                        "success": False,
+                        "error": f"BigQueryへのアクセス権限がありません。サービスアカウントに「BigQuery データ閲覧者」ロールを付与してください。",
+                        "auth_method": auth_method,
+                        "service_account": service_account_email,
+                        "details": error_str
+                    }), 400
+                else:
+                    raise ds_error
+            
+            # Test query execution permission
+            try:
+                test_query = "SELECT 1 as test"
+                query_job = client.query(test_query)
+                list(query_job.result())
+                bq_permissions.append("bigquery.jobs.create")
+            except Exception as query_error:
+                error_str = str(query_error)
+                if "403" in error_str or "Permission" in error_str:
+                    bq_permissions.append("bigquery.jobs.create (制限あり)")
+                else:
+                    pass  # Non-permission error, ignore
+            
+            return jsonify({
+                "success": True,
+                "auth_method": auth_method,
+                "service_account": service_account_email,
+                "project_id_from_credentials": project_id_from_credentials,
+                "configured_project_id": bq_project_id,
+                "permissions": bq_permissions,
+                "datasets_accessible": datasets_accessible[:5],  # Limit to 5
+                "message": f"サービスアカウント接続テスト成功！"
+            })
+            
+        except Exception as auth_error:
+            error_str = str(auth_error)
+            return jsonify({
+                "success": False,
+                "error": f"認証エラー: {error_str}",
+                "auth_method": auth_method,
+                "service_account": service_account_email
+            }), 400
+    
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
