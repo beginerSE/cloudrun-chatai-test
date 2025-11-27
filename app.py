@@ -4537,18 +4537,21 @@ def get_schema_tree(project_id):
             bq_client = None
             
             credentials_file = f"gcp_credentials_project_{project_id}.json"
-            if os.path.exists(credentials_file):
-                credentials = service_account.Credentials.from_service_account_file(credentials_file)
-                bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
-            elif service_account_json:
-                try:
-                    creds_data = json.loads(service_account_json)
-                    credentials = service_account.Credentials.from_service_account_info(creds_data)
-                    bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
-                except json.JSONDecodeError:
-                    return jsonify({"error": "Invalid service account JSON format"}), 400
-            else:
-                bq_client = bigquery.Client(project=bq_project_id)
+            bq_client = bigquery.Client()
+
+            # 20251127本番環境向けにコメントアウト（なにかあったらこれをもとに戻す）
+            # if os.path.exists(credentials_file):
+            #     credentials = service_account.Credentials.from_service_account_file(credentials_file)
+            #     bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
+            # elif service_account_json:
+            #     try:
+            #         creds_data = json.loads(service_account_json)
+            #         credentials = service_account.Credentials.from_service_account_info(creds_data)
+            #         bq_client = bigquery.Client(credentials=credentials, project=bq_project_id)
+            #     except json.JSONDecodeError:
+            #         return jsonify({"error": "Invalid service account JSON format"}), 400
+            # else:
+            #     bq_client = bigquery.Client(project=bq_project_id)
             
             dataset_tree = {}
             
