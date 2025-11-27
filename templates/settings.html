@@ -138,7 +138,11 @@
                             <button class="btn btn-outline-secondary" type="button" id="toggleOpenaiKey">
                                 <i class="bi bi-eye-fill"></i> 表示
                             </button>
+                            <button class="btn btn-outline-primary" type="button" id="validateOpenaiKey">
+                                <i class="bi bi-check-circle"></i> 検証
+                            </button>
                         </div>
+                        <div id="openaiKeyValidationResult" class="form-text mt-2" style="display: none;"></div>
                         <div class="form-text">
                             <a href="https://platform.openai.com/api-keys" target="_blank">
                                 OpenAI Platform <i class="bi bi-box-arrow-up-right"></i>
@@ -169,7 +173,11 @@
                             <button class="btn btn-outline-secondary" type="button" id="toggleGeminiKey">
                                 <i class="bi bi-eye-fill"></i> 表示
                             </button>
+                            <button class="btn btn-outline-primary" type="button" id="validateGeminiKey">
+                                <i class="bi bi-check-circle"></i> 検証
+                            </button>
                         </div>
+                        <div id="geminiKeyValidationResult" class="form-text mt-2" style="display: none;"></div>
                         <div class="form-text">
                             <a href="https://aistudio.google.com/app/apikey" target="_blank">
                                 Google AI Studio <i class="bi bi-box-arrow-up-right"></i>
@@ -196,9 +204,14 @@
                     <label for="projectId" class="form-label">
                         プロジェクトID 
                         <span id="gcpStatus" class="badge status-badge"></span>
+                        <span id="projectIdAutoDetected" class="badge bg-info ms-1" style="display: none;">
+                            <i class="bi bi-magic"></i> サービスアカウントから自動取得
+                        </span>
                     </label>
-                    <input type="text" class="form-control" id="projectId" placeholder="your-gcp-project-id">
+                    <input type="text" class="form-control" id="projectId" placeholder="your-gcp-project-id（空欄の場合はサービスアカウントから自動取得）">
                     <div class="form-text">
+                        <i class="bi bi-info-circle"></i> サービスアカウントJSONをアップロードすると、プロジェクトIDが自動的に取得されます。手動で入力することも可能です。
+                        <br>
                         <a href="https://console.cloud.google.com/" target="_blank">
                             Google Cloud Console <i class="bi bi-box-arrow-up-right"></i>
                         </a> でプロジェクトを確認
@@ -214,8 +227,27 @@
                     </select>
                 </div>
                 <div class="mb-3">
-                    <label for="defaultDataset" class="form-label">デフォルトデータセット</label>
-                    <input type="text" class="form-control" id="defaultDataset" placeholder="your_dataset">
+                    <label for="defaultDataset" class="form-label">
+                        デフォルトデータセット
+                        <span id="datasetLoadingSpinner" class="spinner-border spinner-border-sm ms-2" role="status" style="display: none;">
+                            <span class="visually-hidden">Loading...</span>
+                        </span>
+                    </label>
+                    <div class="input-group">
+                        <select class="form-select" id="defaultDatasetSelect" style="display: none;">
+                            <option value="">-- データセットを選択（任意） --</option>
+                        </select>
+                        <input type="text" class="form-control" id="defaultDataset" placeholder="your_dataset（空欄可）">
+                        <button type="button" class="btn btn-outline-secondary" id="refreshDatasetsBtn" title="データセット一覧を更新">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="toggleDatasetInputBtn" title="入力方法を切替">
+                            <i class="bi bi-list-ul"></i>
+                        </button>
+                    </div>
+                    <div class="form-text">
+                        <i class="bi bi-info-circle"></i> 空欄にすると、すべてのデータセットが分析対象になります。サービスアカウント設定後、一覧から選択できます。
+                    </div>
                 </div>
             </div>
         </div>
@@ -396,7 +428,15 @@
         document.getElementById('testBtn').addEventListener('click', testConnection);
         document.getElementById('toggleOpenaiKey').addEventListener('click', () => toggleApiKeyVisibility('openai'));
         document.getElementById('toggleGeminiKey').addEventListener('click', () => toggleApiKeyVisibility('gemini'));
+        document.getElementById('validateOpenaiKey').addEventListener('click', () => validateApiKey('openai'));
+        document.getElementById('validateGeminiKey').addEventListener('click', () => validateApiKey('gemini'));
         document.getElementById('deleteJsonBtn').addEventListener('click', deleteJsonFile);
+        
+        // データセット関連のイベント
+        document.getElementById('refreshDatasetsBtn').addEventListener('click', loadDatasets);
+        document.getElementById('toggleDatasetInputBtn').addEventListener('click', toggleDatasetInput);
+        document.getElementById('defaultDatasetSelect').addEventListener('change', syncDatasetValue);
+        document.getElementById('defaultDataset').addEventListener('change', syncDatasetValue);
         
         // AIプロバイダー切り替え
         document.getElementById('aiProvider').addEventListener('change', toggleAIProvider);
@@ -532,6 +572,15 @@
             document.getElementById('projectId').value = settings.project_id || '';
             document.getElementById('defaultDataset').value = settings.dataset || '';
 
+            // Show auto-detected project ID badge if applicable
+            const autoDetectedBadge = document.getElementById('projectIdAutoDetected');
+            if (settings.project_id_source === 'service_account' && settings.sa_extracted_project_id) {
+                autoDetectedBadge.style.display = 'inline';
+                autoDetectedBadge.title = `サービスアカウントから取得: ${settings.sa_extracted_project_id}`;
+            } else {
+                autoDetectedBadge.style.display = 'none';
+            }
+
             updateStatusBadge('gcpStatus', settings.has_service_account);
 
             // Load AI provider settings
@@ -623,6 +672,82 @@
         }
     }
 
+    let useDatasetSelect = false;
+
+    async function loadDatasets() {
+        const spinner = document.getElementById('datasetLoadingSpinner');
+        const selectElement = document.getElementById('defaultDatasetSelect');
+        const inputElement = document.getElementById('defaultDataset');
+        const currentValue = inputElement.value || selectElement.value;
+        
+        spinner.style.display = 'inline-block';
+        
+        try {
+            const response = await fetch('/api/list-datasets');
+            const data = await response.json();
+            
+            if (data.success && data.datasets && data.datasets.length > 0) {
+                selectElement.innerHTML = '<option value="">-- データセットを選択（任意） --</option>';
+                
+                data.datasets.forEach(dataset => {
+                    const option = document.createElement('option');
+                    option.value = dataset.id;
+                    option.textContent = dataset.friendly_name || dataset.id;
+                    if (dataset.id === currentValue) {
+                        option.selected = true;
+                    }
+                    selectElement.appendChild(option);
+                });
+                
+                if (!useDatasetSelect) {
+                    toggleDatasetInput();
+                }
+                
+                showNotification(`${data.datasets.length}個のデータセットを取得しました`, 'success');
+            } else {
+                showNotification(data.error || 'データセットが見つかりませんでした', 'warning');
+            }
+        } catch (error) {
+            console.error('データセット取得エラー:', error);
+            showNotification('データセットの取得に失敗しました', 'danger');
+        } finally {
+            spinner.style.display = 'none';
+        }
+    }
+
+    function toggleDatasetInput() {
+        const selectElement = document.getElementById('defaultDatasetSelect');
+        const inputElement = document.getElementById('defaultDataset');
+        const toggleBtn = document.getElementById('toggleDatasetInputBtn');
+        
+        useDatasetSelect = !useDatasetSelect;
+        
+        if (useDatasetSelect) {
+            selectElement.style.display = 'block';
+            inputElement.style.display = 'none';
+            selectElement.value = inputElement.value;
+            toggleBtn.innerHTML = '<i class="bi bi-input-cursor-text"></i>';
+            toggleBtn.title = 'テキスト入力に切替';
+        } else {
+            selectElement.style.display = 'none';
+            inputElement.style.display = 'block';
+            inputElement.value = selectElement.value;
+            toggleBtn.innerHTML = '<i class="bi bi-list-ul"></i>';
+            toggleBtn.title = 'セレクトボックスに切替';
+        }
+    }
+
+    function syncDatasetValue() {
+        const selectElement = document.getElementById('defaultDatasetSelect');
+        const inputElement = document.getElementById('defaultDataset');
+        
+        if (useDatasetSelect) {
+            inputElement.value = selectElement.value;
+        } else {
+            selectElement.value = inputElement.value;
+        }
+    }
+
     async function toggleApiKeyVisibility(provider) {
         const apiKeyInput = provider === 'openai' 
             ? document.getElementById('openaiKey')
@@ -656,6 +781,73 @@
             }
             apiKeyInput.type = 'password';
             toggleBtn.innerHTML = '<i class="bi bi-eye-fill"></i> 表示';
+        }
+    }
+
+    async function validateApiKey(provider) {
+        const apiKeyInput = provider === 'openai' 
+            ? document.getElementById('openaiKey')
+            : document.getElementById('geminiKey');
+        const validateBtn = provider === 'openai'
+            ? document.getElementById('validateOpenaiKey')
+            : document.getElementById('validateGeminiKey');
+        const resultDiv = provider === 'openai'
+            ? document.getElementById('openaiKeyValidationResult')
+            : document.getElementById('geminiKeyValidationResult');
+        
+        let apiKey = apiKeyInput.value;
+        
+        // マスクされている場合は実際のキーを取得
+        if (apiKeyInput.dataset.masked === 'true' && apiKey === '••••••••••••••••••••') {
+            try {
+                const response = await fetch(`/api/get-api-key?provider=${provider}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    apiKey = data.api_key || '';
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> APIキーの取得に失敗しました</span>';
+                resultDiv.style.display = 'block';
+                return;
+            }
+        }
+        
+        if (!apiKey || apiKey === '••••••••••••••••••••') {
+            resultDiv.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> APIキーを入力してください</span>';
+            resultDiv.style.display = 'block';
+            return;
+        }
+        
+        // 検証中の表示
+        validateBtn.disabled = true;
+        validateBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        resultDiv.innerHTML = '<span class="text-muted"><i class="bi bi-hourglass-split"></i> 検証中...</span>';
+        resultDiv.style.display = 'block';
+        
+        try {
+            const response = await fetch('/api/validate-api-key', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    provider: provider,
+                    api_key: apiKey
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.valid) {
+                resultDiv.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill"></i> ' + data.message + '</span>';
+            } else {
+                resultDiv.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle-fill"></i> ' + data.error + '</span>';
+            }
+        } catch (error) {
+            resultDiv.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle-fill"></i> 検証に失敗しました: ' + error.message + '</span>';
+        } finally {
+            validateBtn.disabled = false;
+            validateBtn.innerHTML = '<i class="bi bi-check-circle"></i> 検証';
         }
     }
 
@@ -1037,5 +1229,4 @@
         return div.innerHTML;
     }
 </script>
-
 {% endblock %}
