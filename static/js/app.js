@@ -93,16 +93,20 @@ async function checkConfiguration() {
             aiProviderSelect.value = config.ai_provider;
         }
         
-        if (config.has_api_key && config.has_service_account && config.project_id && config.dataset) {
+        // Check if at least one AI API key is configured (OpenAI OR Gemini)
+        const hasAnyApiKey = config.has_api_key || config.has_gemini_key;
+        
+        if (hasAnyApiKey && config.has_service_account && config.project_id && config.dataset) {
+            const aiProvider = config.ai_provider === 'gemini' ? 'Gemini' : 'OpenAI';
             statusDiv.className = 'config-status mt-3 p-3 rounded success';
             statusDiv.innerHTML = `
                 <i class="bi bi-check-circle-fill text-success"></i>
-                <strong>設定完了:</strong> プロジェクト: <strong>${config.project_name}</strong> | BigQuery: ${config.project_id} | データセット: ${config.dataset}
+                <strong>設定完了:</strong> プロジェクト: <strong>${config.project_name}</strong> | AI: ${aiProvider} | BigQuery: ${config.project_id} | データセット: ${config.dataset}
             `;
         } else {
             statusDiv.className = 'config-status mt-3 p-3 rounded error';
             let missing = [];
-            if (!config.has_api_key) missing.push('OpenAI API キー');
+            if (!hasAnyApiKey) missing.push('API キー (OpenAI または Gemini)');
             if (!config.has_service_account) missing.push('GCP サービスアカウント');
             if (!config.project_id) missing.push('BigQueryプロジェクトID');
             if (!config.dataset) missing.push('データセット');
