@@ -15,48 +15,50 @@
     <div class="login-container">
         <div class="login-card">
             <div class="login-header">
-                <i class="bi bi-person-plus" style="font-size: 3rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;"></i>
+                <div class="mb-4">
+                    <i class="bi bi-person-plus" style="font-size: 3.5rem; color: var(--primary-color);"></i>
+                </div>
                 <h2>新規アカウント作成</h2>
-                <p>BigQuery AI データ分析エージェント</p>
+                <p class="text-secondary font-weight-medium">BigQuery AI データ分析エージェント</p>
             </div>
             
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     {% for category, message in messages %}
                         <div class="alert alert-{{ 'danger' if category == 'error' else 'success' if category == 'success' else 'info' }} alert-dismissible fade show" role="alert">
-                            {{ message }}
+                            <i class="bi bi-{{ 'exclamation-circle-fill' if category == 'error' else 'check-circle-fill' if category == 'success' else 'info-circle-fill' }} me-2"></i>{{ message }}
                             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                         </div>
                     {% endfor %}
                 {% endif %}
             {% endwith %}
             
-            <form method="POST" action="{{ url_for('signup') }}">
+            <form method="POST" action="{{ url_for('signup') }}" class="mt-4">
                 <div class="mb-3">
-                    <label for="username" class="form-label" style="color: var(--text-primary); font-weight: 500;">ユーザーネーム <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" id="username" name="username" placeholder="ユーザーネームを入力" required autofocus autocomplete="username">
-                    <small class="form-text" style="color: var(--text-muted);">半角英数字、アンダースコア、ハイフンが使用できます</small>
+                    <label for="username" class="form-label font-weight-semibold">ユーザーネーム <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control form-control-lg bg-light border-0" id="username" name="username" placeholder="ユーザーネームを入力" required autofocus autocomplete="username">
+                    <small class="form-text text-muted mt-2">半角英数字、アンダースコア、ハイフンが使用できます</small>
                 </div>
                 <div class="mb-3">
-                    <label for="email" class="form-label" style="color: var(--text-primary); font-weight: 500;">メールアドレス（任意）</label>
-                    <input type="email" class="form-control" id="email" name="email" placeholder="email@example.com" autocomplete="email">
+                    <label for="email" class="form-label font-weight-semibold">メールアドレス（任意）</label>
+                    <input type="email" class="form-control form-control-lg bg-light border-0" id="email" name="email" placeholder="email@example.com" autocomplete="email">
                 </div>
                 <div class="mb-3">
-                    <label for="password" class="form-label" style="color: var(--text-primary); font-weight: 500;">パスワード <span class="text-danger">*</span></label>
-                    <input type="password" class="form-control" id="password" name="password" placeholder="パスワードを入力" required autocomplete="new-password">
-                    <small class="form-text" style="color: var(--text-muted);">6文字以上で設定してください</small>
+                    <label for="password" class="form-label font-weight-semibold">パスワード <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control form-control-lg bg-light border-0" id="password" name="password" placeholder="パスワードを入力" required autocomplete="new-password">
+                    <small class="form-text text-muted mt-2">6文字以上で設定してください</small>
                 </div>
                 <div class="mb-4">
-                    <label for="confirm_password" class="form-label" style="color: var(--text-primary); font-weight: 500;">パスワード（確認） <span class="text-danger">*</span></label>
-                    <input type="password" class="form-control" id="confirm_password" name="confirm_password" placeholder="パスワードを再入力" required autocomplete="new-password">
+                    <label for="confirm_password" class="form-label font-weight-semibold">パスワード（確認） <span class="text-danger">*</span></label>
+                    <input type="password" class="form-control form-control-lg bg-light border-0" id="confirm_password" name="confirm_password" placeholder="パスワードを再入力" required autocomplete="new-password">
                 </div>
-                <button type="submit" class="btn btn-primary w-100 py-3">
-                    <i class="bi bi-person-check me-2"></i>アカウント作成
+                <button type="submit" class="btn btn-primary w-100 py-3 font-weight-bold" style="font-size: 1.1rem; border-radius: var(--radius-md);">
+                    アカウント作成 <i class="bi bi-arrow-right ms-2"></i>
                 </button>
             </form>
 
-            <div class="text-center mt-4">
-                <p style="color: var(--text-secondary);">既にアカウントをお持ちですか？ <a href="{{ url_for('login') }}" style="color: var(--primary-light); text-decoration: none; font-weight: 500;">ログイン</a></p>
+            <div class="text-center mt-5">
+                <p class="text-secondary font-weight-medium">既にアカウントをお持ちですか？ <a href="{{ url_for('login') }}" class="text-primary text-decoration-none ms-1 font-weight-bold">ログイン</a></p>
             </div>
         </div>
     </div>

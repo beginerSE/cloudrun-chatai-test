@@ -17,7 +17,7 @@
 
 <div class="row">
     <div class="col-md-8 mb-4">
-        <div class="card shadow-sm">
+        <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">
                     <i class="bi bi-info-circle text-primary"></i> BigQuery AI データ分析エージェントへようこそ
@@ -27,8 +27,8 @@
                     自然言語でBigQueryにクエリを実行し、結果を表形式やグラフで表示します。
                 </p>
                 <hr>
-                <h6 class="mt-3"><i class="bi bi-check-circle text-success"></i> 主な機能</h6>
-                <ul>
+                <h6 class="mt-3 font-weight-bold text-secondary"><i class="bi bi-check-circle text-success me-2"></i>主な機能</h6>
+                <ul class="text-secondary" style="line-height: 1.8;">
                     <li>自然言語によるBigQueryクエリ実行</li>
                     <li>テーブルの自動検索とスキーマ抽出</li>
                     <li>SQLクエリの自動生成と実行</li>
@@ -41,29 +41,35 @@
     </div>
 
     <div class="col-md-4 mb-4">
-        <div class="card shadow-sm border-primary">
-            <div class="card-body text-center">
-                <i class="bi bi-database" style="font-size: 3rem; color: #667eea;"></i>
-                <h5 class="card-title mt-3">クイックスタート</h5>
-                <p class="card-text text-muted">
+        <div class="card h-100" style="border-top: 4px solid var(--primary-color);">
+            <div class="card-body text-center d-flex flex-column justify-content-center">
+                <div class="mb-3">
+                    <i class="bi bi-database" style="font-size: 2.5rem; color: var(--primary-color);"></i>
+                </div>
+                <h5 class="card-title">クイックスタート</h5>
+                <p class="card-text text-muted mb-4">
                     AIチャットを使ってデータ分析を始めましょう
                 </p>
-                <a href="/agent-chat" class="btn btn-primary btn-lg w-100">
-                    <i class="bi bi-chat-dots"></i> AIチャットを開く
+                <a href="/agent-chat" class="btn btn-primary w-100 py-2">
+                    <i class="bi bi-chat-dots me-2"></i>AIチャットを開く
                 </a>
             </div>
         </div>
+    </div>
+</div>
 
-        <div class="card shadow-sm mt-3" id="config-status-card">
-            <div class="card-body">
-                <h6 class="card-title">
-                    <i class="bi bi-gear"></i> 設定状態
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card" id="config-status-card">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <h6 class="card-title mb-0">
+                    <i class="bi bi-gear me-2"></i>設定状態
                 </h6>
                 <div id="config-status-content">
                     <div class="spinner-border spinner-border-sm text-primary" role="status">
                         <span class="visually-hidden">読み込み中...</span>
                     </div>
-                    <span class="ms-2">確認中...</span>
+                    <span class="ms-2 text-muted">確認中...</span>
                 </div>
             </div>
         </div>
@@ -72,15 +78,15 @@
 
 <div class="row mt-4">
     <div class="col-md-4 mb-4">
-        <div class="card shadow-sm h-100">
+        <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">
-                    <i class="bi bi-chat-dots text-info"></i> AIチャット
+                    <i class="bi bi-chat-dots text-primary"></i> AIチャット
                 </h5>
                 <p class="card-text">
                     自然言語でデータについて質問し、AIが自動的にSQLを生成して実行します。
                 </p>
-                <a href="/agent-chat" class="btn btn-outline-info">
+                <a href="/agent-chat" class="btn btn-outline-primary w-100 mt-2">
                     チャットを開く <i class="bi bi-arrow-right"></i>
                 </a>
             </div>
@@ -88,15 +94,15 @@
     </div>
 
     <div class="col-md-4 mb-4">
-        <div class="card shadow-sm h-100">
+        <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">
-                    <i class="bi bi-gear text-warning"></i> 設定
+                    <i class="bi bi-gear text-primary"></i> 設定
                 </h5>
                 <p class="card-text">
                     OpenAI APIキー、BigQuery接続情報などを管理します。
                 </p>
-                <a href="/settings" class="btn btn-outline-warning">
+                <a href="/settings" class="btn btn-outline-primary w-100 mt-2">
                     設定を開く <i class="bi bi-arrow-right"></i>
                 </a>
             </div>
@@ -104,15 +110,15 @@
     </div>
 
     <div class="col-md-4 mb-4">
-        <div class="card shadow-sm h-100">
+        <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">
-                    <i class="bi bi-book text-success"></i> 使い方
+                    <i class="bi bi-book text-primary"></i> 使い方
                 </h5>
                 <p class="card-text">
                     質問例：「売上トップ10の商品を表示して」「今月の売上合計を教えて」
                 </p>
-                <a href="/agent-chat" class="btn btn-outline-success">
+                <a href="/agent-chat" class="btn btn-outline-primary w-100 mt-2">
                     試してみる <i class="bi bi-arrow-right"></i>
                 </a>
             </div>
@@ -123,18 +129,70 @@
 <div class="row mt-4">
     <div class="col-12">
         <div class="card shadow-sm">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">
-                    <i class="bi bi-diagram-3 text-primary"></i> BigQueryスキーマツリー
-                </h5>
-                <button id="refresh-schema-btn" class="btn btn-sm btn-outline-primary">
-                    <i class="bi bi-arrow-clockwise"></i> 更新
-                </button>
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h5 class="mb-0">
+                        <i class="bi bi-diagram-3 text-primary"></i> BigQueryスキーマツリー
+                    </h5>
+                    <div class="d-flex gap-2">
+                        <button id="expand-all-btn" class="btn btn-sm btn-outline-secondary" style="display: none;">
+                            <i class="bi bi-arrows-expand"></i> すべて展開
+                        </button>
+                        <button id="collapse-all-btn" class="btn btn-sm btn-outline-secondary" style="display: none;">
+                            <i class="bi bi-arrows-collapse"></i> すべて閉じる
+                        </button>
+                        <button id="refresh-schema-btn" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-arrow-clockwise"></i> 更新
+                        </button>
+                    </div>
+                </div>
+                <div class="input-group input-group-sm mt-2" id="schema-search-group" style="display: none;">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="schema-search" placeholder="テーブル名・カラム名で検索...">
+                    <button class="btn btn-outline-secondary" type="button" id="schema-search-clear" title="クリア">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
             </div>
             <div class="card-body">
                 <div id="schema-tree-content">
                     <div class="text-center text-muted py-4">
                         <i class="bi bi-info-circle"></i> 「更新」ボタンをクリックしてスキーマを読み込んでください
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Table Memo Modal -->
+<div class="modal fade" id="tableMemoModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-journal-text text-primary"></i> テーブル補足情報: <span id="memoModalTableName" class="text-primary"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info py-2 small mb-3">
+                    <i class="bi bi-info-circle"></i> ここに登録した情報はAIに共有され、このテーブルを使う分析の精度向上に役立ちます（カラムの意味、注意点、集計時のルールなど）。
+                </div>
+                <div id="memoModalAlert"></div>
+                <div id="memoModalList" class="mb-3"></div>
+                <div class="card bg-light">
+                    <div class="card-body">
+                        <h6 class="mb-2"><i class="bi bi-plus-circle"></i> 新しいメモを追加</h6>
+                        <div class="mb-2">
+                            <input type="text" class="form-control form-control-sm" id="memoModalNewKey" placeholder="タイトル（例: statusカラムの意味）">
+                        </div>
+                        <div class="mb-2">
+                            <textarea class="form-control form-control-sm" id="memoModalNewValue" rows="3" placeholder="内容（例: status=1は有効、9は削除済みを表す）"></textarea>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary" id="memoModalAddBtn">
+                            <i class="bi bi-save"></i> 追加
+                        </button>
                     </div>
                 </div>
             </div>
@@ -190,10 +248,43 @@
             }
         });
 
+    let schemaDatasets = null;
+    let tableMemos = {};
+
+    function escapeHtml(str) {
+        return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function highlight(text, filter) {
+        const safe = escapeHtml(text);
+        if (!filter) return safe;
+        const escFilter = filter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return safe.replace(new RegExp('(' + escFilter + ')', 'gi'), '<mark>$1</mark>');
+    }
+
+    async function loadTableMemos() {
+        tableMemos = {};
+        if (!currentProjectId) return;
+        try {
+            const res = await fetch(`/api/projects/${currentProjectId}/memories`);
+            const data = await res.json();
+            if (data.success && data.memories) {
+                data.memories.filter(m => m.category === 'table_info' && m.table_name).forEach(m => {
+                    if (!tableMemos[m.table_name]) tableMemos[m.table_name] = [];
+                    tableMemos[m.table_name].push(m);
+                });
+            }
+        } catch (e) { /* メモ取得失敗時はバッジなしで表示 */ }
+    }
+
+    function memosForTable(fullName, tableName) {
+        return (tableMemos[fullName] || []).concat(tableMemos[tableName] && fullName !== tableName ? tableMemos[tableName] : []);
+    }
+
     document.getElementById('refresh-schema-btn').addEventListener('click', async function() {
         const btn = this;
         const content = document.getElementById('schema-tree-content');
-        
+
         if (!currentProjectId) {
             content.innerHTML = `
                 <div class="alert alert-warning">
@@ -202,10 +293,10 @@
             `;
             return;
         }
-        
+
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 読み込み中...';
-        
+
         content.innerHTML = `
             <div class="text-center text-muted py-4">
                 <div class="spinner-border text-primary" role="status">
@@ -214,17 +305,24 @@
                 <p class="mt-2">BigQueryからスキーマ情報を取得中...</p>
             </div>
         `;
-        
+
         try {
-            const response = await fetch(`/api/projects/${currentProjectId}/schema-tree`);
+            const [response] = await Promise.all([
+                fetch(`/api/projects/${currentProjectId}/schema-tree`),
+                loadTableMemos()
+            ]);
             const data = await response.json();
-            
+
             if (!response.ok) {
                 throw new Error(data.error || 'スキーマの取得に失敗しました');
             }
-            
+
             if (data.success && data.schema_tree.datasets) {
-                renderSchemaTree(data.schema_tree.datasets);
+                schemaDatasets = data.schema_tree.datasets;
+                document.getElementById('schema-search-group').style.display = '';
+                document.getElementById('expand-all-btn').style.display = '';
+                document.getElementById('collapse-all-btn').style.display = '';
+                renderSchemaTree();
             } else {
                 content.innerHTML = `
                     <div class="alert alert-info">
@@ -235,7 +333,7 @@
         } catch (error) {
             content.innerHTML = `
                 <div class="alert alert-danger">
-                    <i class="bi bi-exclamation-circle"></i> エラー: ${error.message}
+                    <i class="bi bi-exclamation-circle"></i> エラー: ${escapeHtml(error.message)}
                 </div>
             `;
         } finally {
@@ -244,9 +342,41 @@
         }
     });
 
-    function renderSchemaTree(datasets) {
+    let searchTimer = null;
+    document.getElementById('schema-search').addEventListener('input', function() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => renderSchemaTree(), 200);
+    });
+    document.getElementById('schema-search-clear').addEventListener('click', function() {
+        document.getElementById('schema-search').value = '';
+        renderSchemaTree();
+    });
+    document.getElementById('expand-all-btn').addEventListener('click', () => setAllExpanded(true));
+    document.getElementById('collapse-all-btn').addEventListener('click', () => setAllExpanded(false));
+
+    function setAllExpanded(expanded) {
+        document.querySelectorAll('.tables-container, .columns-container').forEach(c => {
+            c.style.display = expanded ? 'block' : 'none';
+        });
+        document.querySelectorAll('.dataset-toggle i, .table-toggle i').forEach(icon => {
+            icon.classList.toggle('bi-chevron-down', expanded);
+            icon.classList.toggle('bi-chevron-right', !expanded);
+        });
+    }
+
+    function formatSize(bytes) {
+        if (bytes == null) return '';
+        if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+        if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+        if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+        return bytes + ' B';
+    }
+
+    function renderSchemaTree() {
         const content = document.getElementById('schema-tree-content');
-        
+        const datasets = schemaDatasets;
+        const filter = document.getElementById('schema-search').value.trim().toLowerCase();
+
         if (!datasets || datasets.length === 0) {
             content.innerHTML = `
                 <div class="alert alert-info">
@@ -255,105 +385,261 @@
             `;
             return;
         }
-        
+
         let html = '<div class="schema-tree">';
-        
+        let matchCount = 0;
+
         datasets.forEach(dataset => {
+            if (!dataset || !dataset.name) return;
+            const datasetMatch = filter && dataset.name.toLowerCase().includes(filter);
+            const filteredTables = (dataset.tables || []).map(table => {
+                if (!filter || datasetMatch) return { table, matchedColumns: null };
+                const tableMatch = (table.name || '').toLowerCase().includes(filter);
+                const matchedColumns = (table.columns || []).filter(c =>
+                    c && c.name && (c.name.toLowerCase().includes(filter) || (c.description || '').toLowerCase().includes(filter))
+                );
+                if (tableMatch || matchedColumns.length > 0) {
+                    return { table, matchedColumns: tableMatch ? null : matchedColumns };
+                }
+                return null;
+            }).filter(Boolean);
+
+            if (filter && filteredTables.length === 0 && !datasetMatch) return;
+            matchCount += filteredTables.length;
+
+            const expanded = !!filter;
             html += `
                 <div class="dataset-node mb-3">
                     <div class="d-flex align-items-center mb-2">
-                        <button class="btn btn-sm btn-link text-decoration-none p-0 me-2 dataset-toggle" data-dataset="${dataset.name}">
-                            <i class="bi bi-chevron-right"></i>
+                        <button class="btn btn-sm btn-link text-decoration-none p-0 me-2 dataset-toggle" data-dataset="${escapeHtml(dataset.name)}">
+                            <i class="bi bi-chevron-${expanded ? 'down' : 'right'}"></i>
                         </button>
                         <i class="bi bi-folder-fill text-warning me-2"></i>
-                        <strong>${dataset.name}</strong>
-                        <span class="badge bg-secondary ms-2">${dataset.tables.length} テーブル</span>
+                        <strong>${highlight(dataset.name, filter)}</strong>
+                        <span class="badge bg-secondary ms-2">${filteredTables.length}${filter ? ' / ' + (dataset.tables || []).length : ''} テーブル</span>
                     </div>
-                    <div class="tables-container ms-4" style="display: none;" data-dataset="${dataset.name}">
+                    <div class="tables-container ms-4" style="display: ${expanded ? 'block' : 'none'};" data-dataset="${escapeHtml(dataset.name)}">
             `;
-            
-            dataset.tables.forEach(table => {
+
+            filteredTables.forEach(({ table, matchedColumns }) => {
+                const fullName = `${dataset.name}.${table.name}`;
+                const memos = memosForTable(fullName, table.name);
+                const colExpanded = !!(filter && matchedColumns && matchedColumns.length > 0);
                 html += `
                     <div class="table-node mb-2">
-                        <div class="d-flex align-items-center">
-                            <button class="btn btn-sm btn-link text-decoration-none p-0 me-2 table-toggle" data-table="${dataset.name}.${table.name}">
-                                <i class="bi bi-chevron-right"></i>
+                        <div class="d-flex align-items-center flex-wrap">
+                            <button class="btn btn-sm btn-link text-decoration-none p-0 me-2 table-toggle" data-table="${escapeHtml(fullName)}">
+                                <i class="bi bi-chevron-${colExpanded ? 'down' : 'right'}"></i>
                             </button>
                             <i class="bi bi-table text-primary me-2"></i>
-                            <span>${table.name}</span>
+                            <span>${highlight(table.name, filter)}</span>
                             ${table.columns ? `<span class="badge bg-info ms-2">${table.columns.length} カラム</span>` : ''}
+                            ${table.num_rows != null ? `<span class="badge bg-light text-dark border ms-2">${Number(table.num_rows).toLocaleString()} 行</span>` : ''}
+                            ${table.size_bytes != null ? `<span class="badge bg-light text-dark border ms-1">${formatSize(table.size_bytes)}</span>` : ''}
+                            <button class="btn btn-sm btn-link p-0 ms-2 memo-btn ${memos.length > 0 ? 'text-warning' : 'text-muted'}" data-table="${escapeHtml(fullName)}" title="テーブル補足情報（メモ）">
+                                <i class="bi ${memos.length > 0 ? 'bi-journal-text' : 'bi-journal-plus'}"></i>${memos.length > 0 ? ` <span class="small">${memos.length}</span>` : ''}
+                            </button>
                         </div>
-                        <div class="columns-container ms-4" style="display: none;" data-table="${dataset.name}.${table.name}">
+                        <div class="columns-container ms-4" style="display: ${colExpanded ? 'block' : 'none'};" data-table="${escapeHtml(fullName)}">
                 `;
-                
+
                 if (table.error) {
-                    html += `<div class="text-danger small"><i class="bi bi-exclamation-triangle"></i> ${table.error}</div>`;
+                    html += `<div class="text-danger small"><i class="bi bi-exclamation-triangle"></i> ${escapeHtml(table.error)}</div>`;
                 } else if (table.columns && table.columns.length > 0) {
                     html += '<ul class="list-unstyled mb-0">';
                     table.columns.forEach(column => {
+                        const colMatched = filter && (column.name.toLowerCase().includes(filter) || (column.description || '').toLowerCase().includes(filter));
                         html += `
-                            <li class="small py-1">
+                            <li class="small py-1 ${colMatched ? 'column-matched' : ''}">
                                 <i class="bi bi-dash-lg text-muted"></i>
-                                <span class="text-primary">${column.name}</span>
-                                <span class="text-muted">: ${column.type}</span>
-                                ${column.mode !== 'NULLABLE' ? `<span class="badge bg-warning text-dark">${column.mode}</span>` : ''}
+                                <span class="text-primary">${highlight(column.name, filter)}</span>
+                                <span class="text-muted">: ${escapeHtml(column.type)}</span>
+                                ${column.mode !== 'NULLABLE' ? `<span class="badge bg-warning text-dark">${escapeHtml(column.mode)}</span>` : ''}
+                                ${column.description ? `<span class="text-muted fst-italic ms-1">— ${highlight(column.description, filter)}</span>` : ''}
                             </li>
                         `;
                     });
                     html += '</ul>';
                 }
-                
+
                 html += `
                         </div>
                     </div>
                 `;
             });
-            
+
             html += `
                     </div>
                 </div>
             `;
         });
-        
+
         html += '</div>';
+
+        if (filter && matchCount === 0) {
+            html = `
+                <div class="alert alert-secondary">
+                    <i class="bi bi-search"></i> 「${escapeHtml(filter)}」に一致するテーブル・カラムは見つかりませんでした
+                </div>
+            `;
+        }
+
         content.innerHTML = html;
-        
+
         document.querySelectorAll('.dataset-toggle').forEach(btn => {
             btn.addEventListener('click', function() {
                 const datasetName = this.dataset.dataset;
-                const container = document.querySelector(`.tables-container[data-dataset="${datasetName}"]`);
-                const icon = this.querySelector('i');
-                
-                if (container.style.display === 'none') {
-                    container.style.display = 'block';
-                    icon.classList.remove('bi-chevron-right');
-                    icon.classList.add('bi-chevron-down');
-                } else {
-                    container.style.display = 'none';
-                    icon.classList.remove('bi-chevron-down');
-                    icon.classList.add('bi-chevron-right');
-                }
+                const container = document.querySelector(`.tables-container[data-dataset="${CSS.escape(datasetName)}"]`);
+                toggleContainer(container, this.querySelector('i'));
             });
         });
-        
+
         document.querySelectorAll('.table-toggle').forEach(btn => {
             btn.addEventListener('click', function() {
                 const tableName = this.dataset.table;
-                const container = document.querySelector(`.columns-container[data-table="${tableName}"]`);
-                const icon = this.querySelector('i');
-                
-                if (container.style.display === 'none') {
-                    container.style.display = 'block';
-                    icon.classList.remove('bi-chevron-right');
-                    icon.classList.add('bi-chevron-down');
-                } else {
-                    container.style.display = 'none';
-                    icon.classList.remove('bi-chevron-down');
-                    icon.classList.add('bi-chevron-right');
+                const container = document.querySelector(`.columns-container[data-table="${CSS.escape(tableName)}"]`);
+                toggleContainer(container, this.querySelector('i'));
+            });
+        });
+
+        document.querySelectorAll('.memo-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                openMemoModal(this.dataset.table);
+            });
+        });
+    }
+
+    function toggleContainer(container, icon) {
+        if (!container) return;
+        const show = container.style.display === 'none';
+        container.style.display = show ? 'block' : 'none';
+        icon.classList.toggle('bi-chevron-down', show);
+        icon.classList.toggle('bi-chevron-right', show === false);
+    }
+
+    // ============ Table Memo Modal ============
+    let currentMemoTable = null;
+
+    function openMemoModal(fullTableName) {
+        currentMemoTable = fullTableName;
+        document.getElementById('memoModalTableName').textContent = fullTableName;
+        document.getElementById('memoModalAlert').innerHTML = '';
+        document.getElementById('memoModalNewKey').value = '';
+        document.getElementById('memoModalNewValue').value = '';
+        renderMemoList();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('tableMemoModal')).show();
+    }
+
+    function showMemoAlert(message, type) {
+        document.getElementById('memoModalAlert').innerHTML = `
+            <div class="alert alert-${type} py-2 small">${escapeHtml(message)}</div>
+        `;
+        setTimeout(() => { document.getElementById('memoModalAlert').innerHTML = ''; }, 3000);
+    }
+
+    function renderMemoList() {
+        const list = document.getElementById('memoModalList');
+        const shortName = currentMemoTable.split('.').pop();
+        const memos = memosForTable(currentMemoTable, shortName);
+
+        if (memos.length === 0) {
+            list.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-journal"></i> このテーブルのメモはまだありません</div>';
+            return;
+        }
+
+        list.innerHTML = memos.map(m => `
+            <div class="border rounded p-2 mb-2 memo-item" data-memo-id="${m.id}">
+                <div class="memo-view">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <strong class="small">${escapeHtml(m.memory_key)}</strong>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary btn-sm memo-edit-btn" title="編集"><i class="bi bi-pencil"></i></button>
+                            <button class="btn btn-outline-danger btn-sm memo-delete-btn" title="削除"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-1" style="white-space: pre-wrap;">${escapeHtml(m.memory_value)}</div>
+                </div>
+                <div class="memo-edit" style="display: none;">
+                    <input type="text" class="form-control form-control-sm mb-2 memo-edit-key" value="${escapeHtml(m.memory_key)}">
+                    <textarea class="form-control form-control-sm mb-2 memo-edit-value" rows="3">${escapeHtml(m.memory_value)}</textarea>
+                    <button class="btn btn-sm btn-primary memo-save-btn"><i class="bi bi-save"></i> 保存</button>
+                    <button class="btn btn-sm btn-outline-secondary memo-cancel-btn">キャンセル</button>
+                </div>
+            </div>
+        `).join('');
+
+        list.querySelectorAll('.memo-item').forEach(item => {
+            const memoId = item.dataset.memoId;
+            item.querySelector('.memo-edit-btn').addEventListener('click', () => {
+                item.querySelector('.memo-view').style.display = 'none';
+                item.querySelector('.memo-edit').style.display = 'block';
+            });
+            item.querySelector('.memo-cancel-btn').addEventListener('click', () => {
+                item.querySelector('.memo-view').style.display = 'block';
+                item.querySelector('.memo-edit').style.display = 'none';
+            });
+            item.querySelector('.memo-save-btn').addEventListener('click', async () => {
+                const key = item.querySelector('.memo-edit-key').value.trim();
+                const value = item.querySelector('.memo-edit-value').value.trim();
+                if (!key || !value) { showMemoAlert('タイトルと内容を入力してください', 'warning'); return; }
+                try {
+                    const res = await fetch(`/api/memories/${memoId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ memory_key: key, memory_value: value, category: 'table_info', table_name: currentMemoTable })
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error || '更新に失敗しました');
+                    await loadTableMemos();
+                    renderMemoList();
+                    renderSchemaTree();
+                    showMemoAlert('メモを更新しました', 'success');
+                } catch (e) {
+                    showMemoAlert(e.message, 'danger');
+                }
+            });
+            item.querySelector('.memo-delete-btn').addEventListener('click', async () => {
+                if (!confirm('このメモを削除しますか？')) return;
+                try {
+                    const res = await fetch(`/api/memories/${memoId}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error || '削除に失敗しました');
+                    await loadTableMemos();
+                    renderMemoList();
+                    renderSchemaTree();
+                    showMemoAlert('メモを削除しました', 'success');
+                } catch (e) {
+                    showMemoAlert(e.message, 'danger');
                 }
             });
         });
     }
+
+    document.getElementById('memoModalAddBtn').addEventListener('click', async function() {
+        const key = document.getElementById('memoModalNewKey').value.trim();
+        const value = document.getElementById('memoModalNewValue').value.trim();
+        if (!key || !value) { showMemoAlert('タイトルと内容を入力してください', 'warning'); return; }
+        this.disabled = true;
+        try {
+            const res = await fetch(`/api/projects/${currentProjectId}/memories`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ memory_key: key, memory_value: value, category: 'table_info', table_name: currentMemoTable })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || '追加に失敗しました');
+            document.getElementById('memoModalNewKey').value = '';
+            document.getElementById('memoModalNewValue').value = '';
+            await loadTableMemos();
+            renderMemoList();
+            renderSchemaTree();
+            showMemoAlert('メモを追加しました', 'success');
+        } catch (e) {
+            showMemoAlert(e.message, 'danger');
+        } finally {
+            this.disabled = false;
+        }
+    });
 </script>
 
 <style>
@@ -377,6 +663,25 @@
 
 .dataset-node:hover, .table-node:hover {
     border-left-color: #667eea;
+}
+
+.schema-tree mark {
+    background: #fff3cd;
+    padding: 0 2px;
+    border-radius: 3px;
+}
+
+.column-matched {
+    background: rgba(102, 126, 234, 0.08);
+    border-radius: 4px;
+}
+
+.memo-btn {
+    text-decoration: none;
+}
+
+.memo-btn:hover {
+    color: #f59e0b !important;
 }
 </style>
 {% endblock %}

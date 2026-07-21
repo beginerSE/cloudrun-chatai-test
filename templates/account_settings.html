@@ -6,94 +6,94 @@
 <div class="container-fluid">
     <div class="row mb-4">
         <div class="col-12">
-            <h2><i class="bi bi-person-circle"></i> アカウント設定</h2>
-            <p class="text-muted">ユーザーアカウントの設定を管理します</p>
+            <h2 class="font-weight-bold" style="letter-spacing: -0.02em;"><i class="bi bi-person-circle text-primary me-2"></i>アカウント設定</h2>
+            <p class="text-muted font-weight-medium">ユーザーアカウントの設定を管理します</p>
         </div>
     </div>
 
     <div class="row">
         <div class="col-lg-8">
             <!-- Account Information -->
-            <div class="card mb-4">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-info-circle"></i> アカウント情報</h5>
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-transparent border-bottom-0 pt-4 pb-0">
+                    <h5 class="mb-0 font-weight-bold"><i class="bi bi-info-circle text-primary me-2"></i>アカウント情報</h5>
                 </div>
                 <div class="card-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ユーザーID</label>
-                        <p class="text-muted">{{ current_user.id }}</p>
+                    <div class="mb-3 d-flex justify-content-between align-items-center border-bottom pb-3">
+                        <label class="form-label font-weight-semibold mb-0">ユーザーID</label>
+                        <p class="text-muted mb-0 font-family-mono">{{ current_user.id }}</p>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ユーザーネーム</label>
-                        <p class="text-muted">{{ current_user.username }}</p>
+                    <div class="mb-3 d-flex justify-content-between align-items-center border-bottom pb-3">
+                        <label class="form-label font-weight-semibold mb-0">ユーザーネーム</label>
+                        <p class="text-dark mb-0 font-weight-medium">{{ current_user.username }}</p>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">メールアドレス</label>
-                        <p class="text-muted">{{ current_user.email or '未設定' }}</p>
+                    <div class="mb-3 d-flex justify-content-between align-items-center border-bottom pb-3">
+                        <label class="form-label font-weight-semibold mb-0">メールアドレス</label>
+                        <p class="text-dark mb-0 font-weight-medium">{{ current_user.email or '未設定' }}</p>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">アカウント作成日</label>
-                        <p class="text-muted">{{ current_user.created_at.strftime('%Y年%m月%d日 %H:%M') if current_user.created_at else '不明' }}</p>
+                    <div class="mb-3 d-flex justify-content-between align-items-center">
+                        <label class="form-label font-weight-semibold mb-0">アカウント作成日</label>
+                        <p class="text-muted mb-0">{{ current_user.created_at.strftime('%Y年%m月%d日 %H:%M') if current_user.created_at else '不明' }}</p>
                     </div>
                 </div>
             </div>
 
-            <!-- Change Password -->
-            <div class="card mb-4">
-                <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0"><i class="bi bi-key"></i> パスワード変更</h5>
+            <!-- Update Email -->
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-transparent border-bottom-0 pt-4 pb-0">
+                    <h5 class="mb-0 font-weight-bold"><i class="bi bi-envelope text-info me-2"></i>メールアドレス変更</h5>
                 </div>
                 <div class="card-body">
-                    <form id="changePasswordForm">
-                        <div class="mb-3">
-                            <label for="currentPassword" class="form-label">現在のパスワード</label>
-                            <input type="password" class="form-control" id="currentPassword" required>
+                    <form id="updateEmailForm">
+                        <div class="mb-4">
+                            <label for="newEmail" class="form-label font-weight-semibold">新しいメールアドレス</label>
+                            <input type="email" class="form-control bg-light border-0" id="newEmail" value="{{ current_user.email or '' }}" required>
                         </div>
-                        <div class="mb-3">
-                            <label for="newPassword" class="form-label">新しいパスワード</label>
-                            <input type="password" class="form-control" id="newPassword" required minlength="6">
-                            <small class="form-text text-muted">最低6文字以上で入力してください</small>
-                        </div>
-                        <div class="mb-3">
-                            <label for="confirmPassword" class="form-label">新しいパスワード（確認）</label>
-                            <input type="password" class="form-control" id="confirmPassword" required minlength="6">
-                        </div>
-                        <button type="submit" class="btn btn-warning">
-                            <i class="bi bi-key"></i> パスワードを変更
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check2 me-1"></i>メールアドレスを更新
                         </button>
                     </form>
                 </div>
             </div>
 
-            <!-- Update Email -->
-            <div class="card mb-4">
-                <div class="card-header bg-info text-white">
-                    <h5 class="mb-0"><i class="bi bi-envelope"></i> メールアドレス変更</h5>
+            <!-- Change Password -->
+            <div class="card mb-4 border-0 shadow-sm">
+                <div class="card-header bg-transparent border-bottom-0 pt-4 pb-0">
+                    <h5 class="mb-0 font-weight-bold"><i class="bi bi-key text-warning me-2"></i>パスワード変更</h5>
                 </div>
                 <div class="card-body">
-                    <form id="updateEmailForm">
-                        <div class="mb-3">
-                            <label for="newEmail" class="form-label">新しいメールアドレス</label>
-                            <input type="email" class="form-control" id="newEmail" value="{{ current_user.email or '' }}" required>
+                    <form id="changePasswordForm">
+                        <div class="mb-4">
+                            <label for="currentPassword" class="form-label font-weight-semibold">現在のパスワード</label>
+                            <input type="password" class="form-control bg-light border-0" id="currentPassword" required>
                         </div>
-                        <button type="submit" class="btn btn-info text-white">
-                            <i class="bi bi-envelope"></i> メールアドレスを更新
+                        <div class="mb-4">
+                            <label for="newPassword" class="form-label font-weight-semibold">新しいパスワード</label>
+                            <input type="password" class="form-control bg-light border-0" id="newPassword" required minlength="6">
+                            <small class="form-text text-muted mt-2">最低6文字以上で入力してください</small>
+                        </div>
+                        <div class="mb-4">
+                            <label for="confirmPassword" class="form-label font-weight-semibold">新しいパスワード（確認）</label>
+                            <input type="password" class="form-control bg-light border-0" id="confirmPassword" required minlength="6">
+                        </div>
+                        <button type="submit" class="btn btn-warning text-dark font-weight-bold">
+                            <i class="bi bi-key me-1"></i>パスワードを変更
                         </button>
                     </form>
                 </div>
             </div>
 
             <!-- Delete Account -->
-            <div class="card border-danger mb-4">
-                <div class="card-header bg-danger text-white">
-                    <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> アカウント削除</h5>
+            <div class="card border-danger mb-4 shadow-sm">
+                <div class="card-header bg-transparent border-bottom-0 pt-4 pb-0">
+                    <h5 class="mb-0 font-weight-bold text-danger"><i class="bi bi-exclamation-triangle me-2"></i>アカウント削除</h5>
                 </div>
                 <div class="card-body">
-                    <p class="text-danger">
+                    <p class="text-danger mb-4">
                         <strong>警告:</strong> アカウントを削除すると、すべてのプロジェクト、設定、チャット履歴が完全に削除されます。この操作は取り消せません。
                     </p>
-                    <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteAccountModal">
-                        <i class="bi bi-trash"></i> アカウントを削除
+                    <button type="button" class="btn btn-danger font-weight-bold" data-bs-toggle="modal" data-bs-target="#deleteAccountModal">
+                        <i class="bi bi-trash me-1"></i>アカウントを削除
                     </button>
                 </div>
             </div>

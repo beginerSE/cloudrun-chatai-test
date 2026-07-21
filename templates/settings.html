@@ -77,6 +77,16 @@
                     <i class="bi bi-brain"></i> メモリ管理
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="documents-tab" data-bs-toggle="tab" data-bs-target="#document-settings" type="button" role="tab">
+                    <i class="bi bi-file-earmark-slides"></i> 文書管理
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="consistency-tab" data-bs-toggle="tab" data-bs-target="#consistency-settings" type="button" role="tab">
+                    <i class="bi bi-clipboard-check"></i> 整合性チェック
+                </button>
+            </li>
         </ul>
 
         <div class="tab-content" id="settingsTabContent">
@@ -84,17 +94,17 @@
             <div class="tab-pane fade show active" id="project-settings" role="tabpanel">
         
         <!-- First-time user guidance -->
-        <div id="firstProjectGuidance" class="alert alert-primary alert-dismissible fade show" role="alert" style="display: none;">
-            <h5 class="alert-heading"><i class="bi bi-info-circle-fill"></i> ようこそ！</h5>
-            <p class="mb-2">BigQuery AI データ分析エージェントを使用するには、まず最初のプロジェクトを作成する必要があります。</p>
-            <hr>
-            <p class="mb-2 small"><strong>必要な情報:</strong></p>
-            <ul class="small mb-2">
+        <div id="firstProjectGuidance" class="alert alert-info alert-dismissible fade show shadow-sm" role="alert" style="display: none;">
+            <h5 class="alert-heading font-weight-bold"><i class="bi bi-info-circle-fill me-2"></i>ようこそ！</h5>
+            <p class="mb-2 text-secondary">BigQuery AI データ分析エージェントを使用するには、まず最初のプロジェクトを作成する必要があります。</p>
+            <hr class="my-3 border-info">
+            <p class="mb-2 small font-weight-bold text-primary">必要な情報:</p>
+            <ul class="small mb-2 text-secondary" style="line-height: 1.6;">
                 <li>OpenAI APIキー（<a href="https://platform.openai.com/api-keys" target="_blank" class="alert-link">取得はこちら</a>）</li>
                 <li>BigQuery プロジェクトID</li>
                 <li>BigQuery サービスアカウントJSONファイル</li>
             </ul>
-            <p class="mb-0 small">下記のフォームに必要な情報を入力して、「設定を保存」ボタンをクリックしてください。</p>
+            <p class="mb-0 small text-secondary mt-3">下記のフォームに必要な情報を入力して、「設定を保存」ボタンをクリックしてください。</p>
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
 
@@ -186,12 +196,19 @@
                     </div>
                     <div class="mb-3">
                         <label for="geminiModel" class="form-label">モデル</label>
-                        <select class="form-select" id="geminiModel">
-                            <option value="gemini-2.5-pro">gemini-2.5-pro (推奨)</option>
-                            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                            <option value="gemini-2.0-flash-exp">gemini-2.0-flash-exp</option>
-                            <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-                        </select>
+                        <div class="input-group">
+                            <select class="form-select" id="geminiModel">
+                                <option value="gemini-2.5-pro">gemini-2.5-pro (推奨)</option>
+                                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                                <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                                <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                            </select>
+                            <button class="btn btn-outline-primary" type="button" id="fetchGeminiModels" title="APIから利用可能なモデル一覧を取得">
+                                <i class="bi bi-arrow-repeat"></i> 一覧を取得
+                            </button>
+                        </div>
+                        <div id="geminiModelsResult" class="form-text mt-1" style="display: none;"></div>
+                        <div class="form-text">「一覧を取得」を押すと、お使いのAPIキーで利用可能な最新モデルを取得して選択できます</div>
                     </div>
                 </div>
             </div>
@@ -225,6 +242,22 @@
                         <option value="asia-northeast1">asia-northeast1（東京）</option>
                         <option value="asia-northeast2">asia-northeast2（大阪）</option>
                     </select>
+                </div>
+                <div class="mb-3">
+                    <label for="maxScanGb" class="form-label">クエリスキャン上限（GB）</label>
+                    <input type="number" class="form-control" id="maxScanGb" min="0.1" step="0.1" placeholder="10">
+                    <div class="form-text">
+                        <i class="bi bi-shield-check"></i> 1クエリあたりの最大スキャン量です。実行前にdry-runで見積もり、上限を超えるクエリはブロックされます（デフォルト: 10 GB）。
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="enableReview">
+                        <label class="form-check-label" for="enableReview">分析結果のAIレビューを有効化</label>
+                    </div>
+                    <div class="form-text">
+                        <i class="bi bi-search-heart"></i> 有効にすると、レビューAIが最終回答（SQLの妥当性・解釈の正しさ）を検証し、問題があれば自動で再分析します。処理時間とAPIコストが増加します（最大2回のレビュー）。
+                    </div>
                 </div>
                 <div class="mb-3">
                     <label for="defaultDataset" class="form-label">
@@ -393,9 +426,24 @@
                         <div class="card-body">
                             <h5 class="section-title"><i class="bi bi-plus-circle-fill"></i> 新しいメモリを追加</h5>
                             <div class="mb-3">
-                                <label for="newMemoryKey" class="form-label">メモリキー（カテゴリ）</label>
-                                <input type="text" class="form-control" id="newMemoryKey" placeholder="例: user_preferences, data_insights, business_rules">
-                                <div class="form-text">メモリを識別するためのキー名です</div>
+                                <label for="newMemoryCategory" class="form-label">種類</label>
+                                <select class="form-select" id="newMemoryCategory">
+                                    <option value="general">一般メモ</option>
+                                    <option value="table_info">テーブル補足情報</option>
+                                    <option value="business_rule">ビジネスルール</option>
+                                    <option value="document_context">文書コンテキスト</option>
+                                </select>
+                                <div class="form-text">「テーブル補足情報」はカラムの意味や注意点、「ビジネスルール」は集計定義や社内ルールをAIに伝えます</div>
+                            </div>
+                            <div class="mb-3" id="newMemoryTableNameGroup" style="display: none;">
+                                <label for="newMemoryTableName" class="form-label">対象テーブル名</label>
+                                <input type="text" class="form-control" id="newMemoryTableName" placeholder="例: dataset.sales_orders">
+                                <div class="form-text">このメモが対象とするテーブル名（dataset.table 形式推奨）</div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="newMemoryKey" class="form-label">タイトル（キー）</label>
+                                <input type="text" class="form-control" id="newMemoryKey" placeholder="例: 売上の定義, sales_ordersの注意点">
+                                <div class="form-text">メモリを識別するための名前です</div>
                             </div>
                             <div class="mb-3">
                                 <label for="newMemoryValue" class="form-label">メモリ内容</label>
@@ -429,6 +477,124 @@
                 </div>
             </div>
             <!-- End of Memory Management Tab -->
+            
+            <!-- Document Management Tab -->
+            <div class="tab-pane fade" id="document-settings" role="tabpanel">
+                <div id="documentTabContent">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle-fill"></i> <strong>文書コンテキスト機能について</strong><br>
+                        提案書や議事録（PPTX / PDF / TXT / MD）をアップロードすると、AIが「分析の目的」「分析方針」「KPI定義」などを自動抽出し、
+                        以後のチャット分析とレビューAIの前提として常に参照されます。抽出結果は「メモリ管理」タブで確認・編集できます。
+                    </div>
+                    
+                    <!-- Upload Area -->
+                    <div class="card mb-4 shadow-sm">
+                        <div class="card-body">
+                            <h5 class="section-title"><i class="bi bi-cloud-upload-fill"></i> 文書をアップロード</h5>
+                            <div class="file-upload-area" id="docDropZone">
+                                <i class="bi bi-file-earmark-slides fs-1 text-primary"></i>
+                                <p class="mt-2">クリックしてファイルを選択、またはドラッグ＆ドロップ<br>
+                                <small class="text-muted">対応形式: PPTX / PDF / TXT / MD（最大20MB）</small></p>
+                                <input type="file" id="docFile" accept=".pptx,.pdf,.txt,.md" style="display: none;">
+                            </div>
+                            <div id="docUploadProgress" class="mt-3" style="display: none;">
+                                <div class="d-flex align-items-center">
+                                    <span class="spinner-border spinner-border-sm text-primary me-2" role="status"></span>
+                                    <span id="docUploadStatus">アップロード中...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Extracted context preview (shown after upload) -->
+                    <div id="docExtractResult" class="card mb-4 shadow-sm" style="display: none;">
+                        <div class="card-body">
+                            <h5 class="section-title"><i class="bi bi-lightbulb-fill"></i> 抽出されたコンテキスト</h5>
+                            <div id="docExtractItems"></div>
+                            <div class="form-text mt-2">
+                                <i class="bi bi-pencil"></i> 内容の修正は「メモリ管理」タブの各項目（種類: 文書コンテキスト）から行えます。
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Documents List -->
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="section-title"><i class="bi bi-files"></i> アップロード済み文書</h5>
+                            <div id="documentsList">
+                                <div class="text-center text-muted py-4">
+                                    <i class="bi bi-inbox fs-1"></i>
+                                    <p class="mt-2">文書がまだありません</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="noProjectWarningDocuments" style="display: none;">
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle-fill"></i> <strong>プロジェクトが選択されていません</strong><br>
+                        文書管理機能を使用するには、先にプロジェクトを作成・選択してください。
+                    </div>
+                </div>
+            </div>
+            <!-- End of Document Management Tab -->
+
+            <!-- Consistency Check Tab -->
+            <div class="tab-pane fade" id="consistency-settings" role="tabpanel">
+                <div id="consistencyTabContent">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle-fill"></i> <strong>数値の齟齬チェック機能について</strong><br>
+                        主要テーブルの基礎集計（行数・数値列の合計/最小/最大・日付範囲）を保存しておくと、
+                        レビューAIが分析結果の数値を基準値や過去の分析結果と照合し、矛盾があればチャット上で【数値齟齬】として警告します。
+                        基礎集計はプロジェクトのスキャン量上限（max_scan_gb）の範囲内で実行されます。
+                    </div>
+
+                    <!-- Baseline Stats -->
+                    <div class="card mb-4 shadow-sm">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h5 class="section-title mb-0"><i class="bi bi-table"></i> テーブル基礎集計</h5>
+                                <button class="btn btn-primary btn-sm" id="refreshBaselineBtn">
+                                    <i class="bi bi-arrow-clockwise"></i> 基礎集計を更新
+                                </button>
+                            </div>
+                            <div id="baselineProgress" class="mb-3" style="display: none;">
+                                <span class="spinner-border spinner-border-sm text-primary me-2" role="status"></span>
+                                <span>基礎集計を実行中...（テーブル数によっては数分かかる場合があります）</span>
+                            </div>
+                            <div id="baselineStatsList">
+                                <div class="text-center text-muted py-4">
+                                    <i class="bi bi-inbox fs-1"></i>
+                                    <p class="mt-2">基礎集計がまだありません。「基礎集計を更新」ボタンで取得してください。</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Saved Analysis Metrics -->
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <h5 class="section-title"><i class="bi bi-graph-up"></i> 過去の分析で保存された主要指標</h5>
+                            <p class="text-muted small mb-3">分析完了時に回答から自動抽出された指標です。同種の質問で大きく乖離した場合、レビューAIが警告します。</p>
+                            <div id="analysisMetricsList">
+                                <div class="text-center text-muted py-4">
+                                    <i class="bi bi-inbox fs-1"></i>
+                                    <p class="mt-2">保存された指標はまだありません</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="noProjectWarningConsistency" style="display: none;">
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle-fill"></i> <strong>プロジェクトが選択されていません</strong><br>
+                        整合性チェック機能を使用するには、先にプロジェクトを作成・選択してください。
+                    </div>
+                </div>
+            </div>
+            <!-- End of Consistency Check Tab -->
         </div>
         <!-- End of Tab Content -->
         
@@ -480,6 +646,7 @@
         document.getElementById('toggleGeminiKey').addEventListener('click', () => toggleApiKeyVisibility('gemini'));
         document.getElementById('validateOpenaiKey').addEventListener('click', () => validateApiKey('openai'));
         document.getElementById('validateGeminiKey').addEventListener('click', () => validateApiKey('gemini'));
+        document.getElementById('fetchGeminiModels').addEventListener('click', fetchGeminiModels);
         document.getElementById('deleteJsonBtn').addEventListener('click', deleteJsonFile);
         document.getElementById('testServiceAccountBtn').addEventListener('click', testServiceAccount);
         
@@ -512,6 +679,63 @@
         
         // 初期表示：環境変数の利用可能性をチェック
         checkEnvAvailability();
+    }
+    
+    function setGeminiModelValue(modelName) {
+        const select = document.getElementById('geminiModel');
+        if (!modelName) return;
+        const exists = Array.from(select.options).some(opt => opt.value === modelName);
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = modelName;
+            opt.textContent = modelName;
+            select.appendChild(opt);
+        }
+        select.value = modelName;
+    }
+    
+    async function fetchGeminiModels() {
+        const btn = document.getElementById('fetchGeminiModels');
+        const resultDiv = document.getElementById('geminiModelsResult');
+        const select = document.getElementById('geminiModel');
+        const currentValue = select.value;
+        
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 取得中...';
+        resultDiv.style.display = 'none';
+        
+        try {
+            const response = await fetch('/api/gemini-models');
+            const data = await response.json();
+            
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || 'モデル一覧の取得に失敗しました');
+            }
+            
+            select.innerHTML = '';
+            data.models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.name;
+                opt.textContent = m.display_name && m.display_name !== m.name
+                    ? `${m.name}（${m.display_name}）`
+                    : m.name;
+                if (m.description) opt.title = m.description;
+                select.appendChild(opt);
+            });
+            
+            setGeminiModelValue(currentValue);
+            
+            resultDiv.className = 'form-text mt-1 text-success';
+            resultDiv.textContent = `✓ ${data.models.length}件のモデルを取得しました`;
+            resultDiv.style.display = 'block';
+        } catch (error) {
+            resultDiv.className = 'form-text mt-1 text-danger';
+            resultDiv.textContent = `✗ ${error.message}`;
+            resultDiv.style.display = 'block';
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> 一覧を取得';
+        }
     }
     
     function toggleAIProvider() {
@@ -576,10 +800,30 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
-                }
+                },
+                credentials: 'same-origin'
             });
             
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                // Non-JSON response - likely authentication redirect or server error
+                if (response.status === 401 || response.status === 302) {
+                    showToast('セッションが切れました。再度ログインしてください。', 'warning');
+                    setTimeout(() => { window.location.href = '/login'; }, 1500);
+                    return;
+                }
+                throw new Error(`サーバーエラーが発生しました (${response.status})`);
+            }
+            
             const data = await response.json();
+            
+            // Check for auth_required flag
+            if (data.auth_required) {
+                showToast('セッションが切れました。再度ログインしてください。', 'warning');
+                setTimeout(() => { window.location.href = data.redirect || '/login'; }, 1500);
+                return;
+            }
             
             resultDiv.style.display = 'block';
             
@@ -737,11 +981,15 @@
             }
             
             if (settings.gemini_model) {
-                document.getElementById('geminiModel').value = settings.gemini_model;
+                setGeminiModelValue(settings.gemini_model);
             }
             if (settings.location) {
                 document.getElementById('location').value = settings.location;
             }
+            if (settings.max_scan_gb) {
+                document.getElementById('maxScanGb').value = settings.max_scan_gb;
+            }
+            document.getElementById('enableReview').checked = !!settings.enable_review;
             
             // 既存JSONファイル情報を取得
             const jsonResponse = await fetch('/api/get-json-file-info');
@@ -1008,6 +1256,11 @@
             formData.append('project_id', document.getElementById('projectId').value);
             formData.append('location', document.getElementById('location').value);
             formData.append('default_dataset', document.getElementById('defaultDataset').value);
+            const maxScanGbValue = document.getElementById('maxScanGb').value;
+            if (maxScanGbValue) {
+                formData.append('max_scan_gb', maxScanGbValue);
+            }
+            formData.append('enable_review', document.getElementById('enableReview').checked ? 'true' : 'false');
 
             // JSON認証の選択肢を追加
             const jsonSource = document.querySelector('input[name="jsonSource"]:checked').value;
@@ -1146,6 +1399,13 @@
         if (addMemoryBtn) {
             addMemoryBtn.addEventListener('click', addMemory);
         }
+        
+        const newMemoryCategory = document.getElementById('newMemoryCategory');
+        if (newMemoryCategory) {
+            newMemoryCategory.addEventListener('change', function() {
+                document.getElementById('newMemoryTableNameGroup').style.display = this.value === 'table_info' ? 'block' : 'none';
+            });
+        }
     });
 
     async function loadMemories() {
@@ -1197,7 +1457,9 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <h6 class="card-subtitle text-muted">
+                            ${categoryBadge(memory.category)}
                             <i class="bi bi-tag-fill"></i> ${escapeHtml(memory.memory_key)}
+                            ${memory.table_name ? `<span class="badge bg-light text-dark border ms-1"><i class="bi bi-table"></i> ${escapeHtml(memory.table_name)}</span>` : ''}
                         </h6>
                         <div>
                             <button class="btn btn-sm btn-outline-primary me-1" onclick="editMemory(${memory.id})">
@@ -1216,7 +1478,20 @@
                     </div>
                     <div id="memory-edit-${memory.id}" style="display: none;">
                         <div class="mb-2">
-                            <label class="form-label">メモリキー</label>
+                            <label class="form-label">種類</label>
+                            <select class="form-select" id="edit-category-${memory.id}" onchange="toggleEditTableName(${memory.id})">
+                                <option value="general" ${(memory.category || 'general') === 'general' ? 'selected' : ''}>一般メモ</option>
+                                <option value="table_info" ${memory.category === 'table_info' ? 'selected' : ''}>テーブル補足情報</option>
+                                <option value="business_rule" ${memory.category === 'business_rule' ? 'selected' : ''}>ビジネスルール</option>
+                                <option value="document_context" ${memory.category === 'document_context' ? 'selected' : ''}>文書コンテキスト</option>
+                            </select>
+                        </div>
+                        <div class="mb-2" id="edit-table-group-${memory.id}" style="display: ${memory.category === 'table_info' ? 'block' : 'none'};">
+                            <label class="form-label">対象テーブル名</label>
+                            <input type="text" class="form-control" id="edit-table-${memory.id}" value="${escapeHtml(memory.table_name || '')}" placeholder="例: dataset.sales_orders">
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">タイトル（キー）</label>
                             <input type="text" class="form-control" id="edit-key-${memory.id}" value="${escapeHtml(memory.memory_key)}">
                         </div>
                         <div class="mb-2">
@@ -1235,14 +1510,41 @@
         `).join('');
     }
 
+    function categoryBadge(category) {
+        if (category === 'table_info') {
+            return '<span class="badge bg-info text-dark me-1">テーブル情報</span>';
+        }
+        if (category === 'business_rule') {
+            return '<span class="badge bg-warning text-dark me-1">ビジネスルール</span>';
+        }
+        if (category === 'document_context') {
+            return '<span class="badge me-1" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff;">文書コンテキスト</span>';
+        }
+        return '<span class="badge bg-secondary me-1">一般</span>';
+    }
+
+    function toggleEditTableName(memoryId) {
+        const category = document.getElementById(`edit-category-${memoryId}`).value;
+        document.getElementById(`edit-table-group-${memoryId}`).style.display = category === 'table_info' ? 'block' : 'none';
+    }
+
     async function addMemory() {
         const keyInput = document.getElementById('newMemoryKey');
         const valueInput = document.getElementById('newMemoryValue');
+        const categorySelect = document.getElementById('newMemoryCategory');
+        const tableNameInput = document.getElementById('newMemoryTableName');
         const key = keyInput.value.trim();
         const value = valueInput.value.trim();
+        const category = categorySelect.value;
+        const tableName = tableNameInput.value.trim();
         
         if (!key || !value) {
-            showToast('メモリキーと内容を入力してください', 'warning');
+            showToast('タイトルと内容を入力してください', 'warning');
+            return;
+        }
+        
+        if (category === 'table_info' && !tableName) {
+            showToast('テーブル補足情報には対象テーブル名を入力してください', 'warning');
             return;
         }
         
@@ -1257,7 +1559,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     memory_key: key,
-                    memory_value: value
+                    memory_value: value,
+                    category: category,
+                    table_name: category === 'table_info' ? tableName : null
                 })
             });
             
@@ -1267,6 +1571,9 @@
                 showToast('メモリを追加しました', 'success');
                 keyInput.value = '';
                 valueInput.value = '';
+                tableNameInput.value = '';
+                categorySelect.value = 'general';
+                document.getElementById('newMemoryTableNameGroup').style.display = 'none';
                 loadMemories();
             } else {
                 showToast('エラー: ' + data.error, 'danger');
@@ -1289,9 +1596,16 @@
     async function saveMemory(memoryId) {
         const key = document.getElementById(`edit-key-${memoryId}`).value.trim();
         const value = document.getElementById(`edit-value-${memoryId}`).value.trim();
+        const category = document.getElementById(`edit-category-${memoryId}`).value;
+        const tableName = document.getElementById(`edit-table-${memoryId}`).value.trim();
         
         if (!key || !value) {
-            showToast('メモリキーと内容を入力してください', 'warning');
+            showToast('タイトルと内容を入力してください', 'warning');
+            return;
+        }
+        
+        if (category === 'table_info' && !tableName) {
+            showToast('テーブル補足情報には対象テーブル名を入力してください', 'warning');
             return;
         }
         
@@ -1301,7 +1615,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     memory_key: key,
-                    memory_value: value
+                    memory_value: value,
+                    category: category,
+                    table_name: category === 'table_info' ? tableName : null
                 })
             });
             
@@ -1345,6 +1661,368 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    // ============================================
+    // Document Management Functions
+    // ============================================
+    document.addEventListener('DOMContentLoaded', function() {
+        const documentsTab = document.getElementById('documents-tab');
+        if (documentsTab) {
+            documentsTab.addEventListener('shown.bs.tab', function() {
+                loadDocuments();
+            });
+        }
+
+        const docDropZone = document.getElementById('docDropZone');
+        const docFileInput = document.getElementById('docFile');
+        if (docDropZone && docFileInput) {
+            docDropZone.addEventListener('click', () => docFileInput.click());
+            docDropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                docDropZone.classList.add('dragover');
+            });
+            docDropZone.addEventListener('dragleave', () => docDropZone.classList.remove('dragover'));
+            docDropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                docDropZone.classList.remove('dragover');
+                if (e.dataTransfer.files.length > 0) {
+                    uploadDocument(e.dataTransfer.files[0]);
+                }
+            });
+            docFileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    uploadDocument(e.target.files[0]);
+                    e.target.value = '';
+                }
+            });
+        }
+    });
+
+    async function ensureActiveProjectForDocuments() {
+        if (currentProjectId) return true;
+        try {
+            const res = await fetch('/api/projects/active');
+            const data = await res.json();
+            if (data.success && data.project) {
+                currentProjectId = data.project.id;
+                return true;
+            }
+        } catch (e) { /* fallthrough */ }
+        document.getElementById('documentTabContent').style.display = 'none';
+        document.getElementById('noProjectWarningDocuments').style.display = 'block';
+        return false;
+    }
+
+    async function loadDocuments() {
+        if (!(await ensureActiveProjectForDocuments())) return;
+        document.getElementById('documentTabContent').style.display = 'block';
+        document.getElementById('noProjectWarningDocuments').style.display = 'none';
+        try {
+            const response = await fetch(`/api/projects/${currentProjectId}/documents`);
+            const data = await response.json();
+            if (data.success) {
+                displayDocuments(data.documents);
+            } else {
+                showToast('文書一覧の読み込みに失敗しました: ' + data.error, 'danger');
+            }
+        } catch (error) {
+            showToast('エラー: ' + error.message, 'danger');
+        }
+    }
+
+    function documentTypeIcon(fileType) {
+        if (fileType === 'pptx') return '<i class="bi bi-file-earmark-slides-fill text-warning"></i>';
+        if (fileType === 'pdf') return '<i class="bi bi-file-earmark-pdf-fill text-danger"></i>';
+        return '<i class="bi bi-file-earmark-text-fill text-secondary"></i>';
+    }
+
+    function displayDocuments(documents) {
+        const list = document.getElementById('documentsList');
+        if (!documents || documents.length === 0) {
+            list.innerHTML = `
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-inbox fs-1"></i>
+                    <p class="mt-2">文書がまだありません</p>
+                </div>
+            `;
+            return;
+        }
+        list.innerHTML = documents.map(doc => `
+            <div class="card mb-3" id="document-${doc.id}">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="mb-1">${documentTypeIcon(doc.file_type)} ${escapeHtml(doc.filename)}</h6>
+                        <small class="text-muted">
+                            <i class="bi bi-clock"></i> ${new Date(doc.created_at).toLocaleString('ja-JP')}
+                            <span class="ms-2"><i class="bi bi-lightbulb"></i> 抽出コンテキスト: ${doc.memory_count}件</span>
+                        </small>
+                    </div>
+                    <div>
+                        <button class="btn btn-sm btn-outline-primary me-1" onclick="reextractDocument(${doc.id})" id="reextract-btn-${doc.id}">
+                            <i class="bi bi-arrow-repeat"></i> 再抽出
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteDocument(${doc.id})">
+                            <i class="bi bi-trash-fill"></i> 削除
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function showExtractedItems(memories) {
+        const resultCard = document.getElementById('docExtractResult');
+        const itemsDiv = document.getElementById('docExtractItems');
+        if (!memories || memories.length === 0) {
+            resultCard.style.display = 'none';
+            return;
+        }
+        itemsDiv.innerHTML = memories.map(m => `
+            <div class="border rounded p-3 mb-2" style="border-left: 4px solid #7c3aed !important;">
+                <h6 class="mb-1"><i class="bi bi-lightbulb-fill" style="color: #7c3aed;"></i> ${escapeHtml(m.memory_key)}</h6>
+                <p class="mb-0 small">${escapeHtml(m.memory_value)}</p>
+            </div>
+        `).join('');
+        resultCard.style.display = 'block';
+    }
+
+    async function uploadDocument(file) {
+        if (!(await ensureActiveProjectForDocuments())) return;
+        const progress = document.getElementById('docUploadProgress');
+        const status = document.getElementById('docUploadStatus');
+        progress.style.display = 'block';
+        status.textContent = `「${file.name}」をアップロードし、AIが目的・方針を抽出中...（1分程度かかる場合があります）`;
+        document.getElementById('docExtractResult').style.display = 'none';
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await fetch(`/api/projects/${currentProjectId}/documents`, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            if (data.success) {
+                showToast(data.message, 'success');
+                showExtractedItems(data.memories);
+                loadDocuments();
+            } else {
+                showToast(data.error || 'アップロードに失敗しました', 'danger');
+            }
+        } catch (error) {
+            showToast('エラー: ' + error.message, 'danger');
+        } finally {
+            progress.style.display = 'none';
+        }
+    }
+
+    async function reextractDocument(documentId) {
+        const btn = document.getElementById(`reextract-btn-${documentId}`);
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 抽出中...';
+        }
+        try {
+            const response = await fetch(`/api/documents/${documentId}/reextract`, { method: 'POST' });
+            const data = await response.json();
+            if (data.success) {
+                showToast(data.message, 'success');
+                showExtractedItems(data.memories);
+                loadDocuments();
+            } else {
+                showToast(data.error || '再抽出に失敗しました', 'danger');
+            }
+        } catch (error) {
+            showToast('エラー: ' + error.message, 'danger');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> 再抽出';
+            }
+        }
+    }
+
+    async function deleteDocument(documentId) {
+        if (!confirm('この文書と、抽出されたコンテキスト（メモリ）をすべて削除しますか？')) return;
+        try {
+            const response = await fetch(`/api/documents/${documentId}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (data.success) {
+                showToast(data.message, 'success');
+                document.getElementById('docExtractResult').style.display = 'none';
+                loadDocuments();
+            } else {
+                showToast(data.error || '削除に失敗しました', 'danger');
+            }
+        } catch (error) {
+            showToast('エラー: ' + error.message, 'danger');
+        }
+    }
+
+    // ============================================
+    // Consistency Check Functions
+    // ============================================
+    document.addEventListener('DOMContentLoaded', function() {
+        const consistencyTab = document.getElementById('consistency-tab');
+        if (consistencyTab) {
+            consistencyTab.addEventListener('shown.bs.tab', function() {
+                loadConsistencyData();
+            });
+        }
+        const refreshBtn = document.getElementById('refreshBaselineBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', refreshBaselineStats);
+        }
+    });
+
+    async function ensureActiveProjectForConsistency() {
+        if (currentProjectId) return true;
+        try {
+            const res = await fetch('/api/projects/active');
+            const data = await res.json();
+            if (data.success && data.project) {
+                currentProjectId = data.project.id;
+                return true;
+            }
+        } catch (e) { /* fallthrough */ }
+        document.getElementById('consistencyTabContent').style.display = 'none';
+        document.getElementById('noProjectWarningConsistency').style.display = 'block';
+        return false;
+    }
+
+    async function loadConsistencyData() {
+        if (!(await ensureActiveProjectForConsistency())) return;
+        document.getElementById('consistencyTabContent').style.display = 'block';
+        document.getElementById('noProjectWarningConsistency').style.display = 'none';
+        loadBaselineStats();
+        loadAnalysisMetrics();
+    }
+
+    function formatNumberJa(value) {
+        if (value === null || value === undefined) return '−';
+        const num = Number(value);
+        if (!isFinite(num)) return String(value);
+        return num.toLocaleString('ja-JP', { maximumFractionDigits: 2 });
+    }
+
+    async function loadBaselineStats() {
+        const container = document.getElementById('baselineStatsList');
+        try {
+            const response = await fetch(`/api/projects/${currentProjectId}/baseline-stats`);
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || '取得に失敗しました');
+            if (!data.stats.length) {
+                container.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-inbox fs-1"></i><p class="mt-2">基礎集計がまだありません。「基礎集計を更新」ボタンで取得してください。</p></div>';
+                return;
+            }
+            container.innerHTML = '';
+            data.stats.forEach(stat => {
+                const card = document.createElement('div');
+                card.className = 'border rounded p-3 mb-2';
+                const computedAt = stat.computed_at ? new Date(stat.computed_at).toLocaleString('ja-JP') : '';
+                let bodyHtml = '';
+                if (stat.error) {
+                    bodyHtml = `<div class="text-danger small mt-1"><i class="bi bi-exclamation-triangle"></i> 取得エラー: ${escapeHtml(stat.error)}</div>`;
+                } else {
+                    const rows = [];
+                    rows.push(`<span class="badge bg-light text-dark border me-1">行数: ${formatNumberJa(stat.row_count)}</span>`);
+                    (stat.numeric_stats || []).forEach(col => {
+                        rows.push(`<div class="small text-secondary">・${escapeHtml(col.column)}: 合計=${formatNumberJa(col.sum)} / 最小=${formatNumberJa(col.min)} / 最大=${formatNumberJa(col.max)}</div>`);
+                    });
+                    (stat.date_ranges || []).forEach(col => {
+                        rows.push(`<div class="small text-secondary">・${escapeHtml(col.column)}: 期間 ${escapeHtml(String(col.min ?? '−'))} 〜 ${escapeHtml(String(col.max ?? '−'))}</div>`);
+                    });
+                    bodyHtml = rows.join('');
+                }
+                card.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-start">
+                        <strong><i class="bi bi-table text-primary me-1"></i>${escapeHtml(stat.dataset_id)}.${escapeHtml(stat.table_name)}</strong>
+                        <span class="text-muted small">${computedAt}</span>
+                    </div>
+                    <div class="mt-2">${bodyHtml}</div>
+                `;
+                container.appendChild(card);
+            });
+        } catch (error) {
+            container.innerHTML = `<div class="text-danger small p-3">エラー: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async function refreshBaselineStats() {
+        if (!(await ensureActiveProjectForConsistency())) return;
+        const btn = document.getElementById('refreshBaselineBtn');
+        const progress = document.getElementById('baselineProgress');
+        btn.disabled = true;
+        progress.style.display = 'block';
+        try {
+            const response = await fetch(`/api/projects/${currentProjectId}/baseline-stats/refresh`, { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok || !data.success) throw new Error(data.error || '基礎集計の実行に失敗しました');
+            let msg = `基礎集計を更新しました（${data.tables_processed}テーブル中 ${data.succeeded}件成功）`;
+            showToast(msg, data.failed > 0 ? 'warning' : 'success');
+            loadBaselineStats();
+        } catch (error) {
+            showToast('エラー: ' + error.message, 'danger');
+        } finally {
+            btn.disabled = false;
+            progress.style.display = 'none';
+        }
+    }
+
+    async function loadAnalysisMetrics() {
+        const container = document.getElementById('analysisMetricsList');
+        try {
+            const response = await fetch(`/api/projects/${currentProjectId}/analysis-metrics`);
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || '取得に失敗しました');
+            if (!data.metrics.length) {
+                container.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-inbox fs-1"></i><p class="mt-2">保存された指標はまだありません</p></div>';
+                return;
+            }
+            container.innerHTML = '';
+            const table = document.createElement('div');
+            table.className = 'table-responsive';
+            let rowsHtml = '';
+            data.metrics.forEach(m => {
+                const createdAt = m.created_at ? new Date(m.created_at).toLocaleString('ja-JP') : '';
+                rowsHtml += `
+                    <tr>
+                        <td>${escapeHtml(m.metric_name)}</td>
+                        <td class="text-end">${formatNumberJa(m.metric_value)}${escapeHtml(m.metric_unit || '')}</td>
+                        <td class="small text-muted">${escapeHtml((m.question || '').substring(0, 60))}</td>
+                        <td class="small text-muted text-nowrap">${createdAt}</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteAnalysisMetric(${m.id})" title="削除">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>`;
+            });
+            table.innerHTML = `
+                <table class="table table-sm align-middle">
+                    <thead><tr><th>指標名</th><th class="text-end">値</th><th>質問</th><th>日時</th><th></th></tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>`;
+            container.appendChild(table);
+        } catch (error) {
+            container.innerHTML = `<div class="text-danger small p-3">エラー: ${escapeHtml(error.message)}</div>`;
+        }
+    }
+
+    async function deleteAnalysisMetric(metricId) {
+        if (!confirm('この指標を削除しますか？')) return;
+        try {
+            const response = await fetch(`/api/projects/${currentProjectId}/analysis-metrics/${metricId}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (data.success) {
+                showToast('指標を削除しました', 'success');
+                loadAnalysisMetrics();
+            } else {
+                showToast(data.error || '削除に失敗しました', 'danger');
+            }
+        } catch (error) {
+            showToast('エラー: ' + error.message, 'danger');
+        }
     }
 </script>
 {% endblock %}
