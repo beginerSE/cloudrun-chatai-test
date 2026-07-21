@@ -62,61 +62,52 @@ function renderProjects() {
     }
     
     container.innerHTML = `
-        <div class="row">
+        <div class="list-group shadow-sm">
             ${projects.map(project => `
-                <div class="col-md-6 col-lg-4 mb-4">
-                    <div class="card h-100 ${project.is_active ? 'border-primary' : ''}">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-start mb-2">
-                                <h5 class="card-title">
-                                    <i class="bi bi-folder"></i> ${escapeHtml(project.name)}
-                                    ${project.is_active ? '<span class="badge bg-primary ms-2">アクティブ</span>' : ''}
-                                </h5>
-                                <div class="dropdown">
-                                    <button class="btn btn-sm btn-link text-secondary" type="button" data-bs-toggle="dropdown">
-                                        <i class="bi bi-three-dots-vertical"></i>
-                                    </button>
-                                    <ul class="dropdown-menu dropdown-menu-end">
-                                        ${!project.is_active ? `
-                                            <li><a class="dropdown-item" href="#" onclick="activateProject(${project.id}); return false;">
-                                                <i class="bi bi-check-circle"></i> アクティブ化
-                                            </a></li>
-                                        ` : ''}
-                                        <li><a class="dropdown-item" href="#" onclick="editProject(${project.id}); return false;">
-                                            <i class="bi bi-pencil"></i> 編集
-                                        </a></li>
-                                        <li><hr class="dropdown-divider"></li>
-                                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteProject(${project.id}, '${escapeHtml(project.name)}'); return false;">
-                                            <i class="bi bi-trash"></i> 削除
-                                        </a></li>
-                                    </ul>
-                                </div>
+                <div class="list-group-item list-group-item-action project-card ${project.is_active ? 'border-start border-primary border-3' : ''}" onclick="openProject(${project.id})" style="cursor: pointer;" title="クリックしてAIチャットを開く">
+                    <div class="d-flex align-items-center gap-3 py-1">
+                        <i class="bi bi-folder fs-4 ${project.is_active ? 'text-primary' : 'text-secondary'}"></i>
+                        <div class="flex-grow-1 min-width-0">
+                            <div class="d-flex align-items-center flex-wrap gap-2">
+                                <span class="fw-semibold">${escapeHtml(project.name)}</span>
+                                ${project.is_active ? '<span class="badge bg-primary">アクティブ</span>' : ''}
                             </div>
-                            
-                            <p class="card-text text-muted small">
-                                ${project.description || '説明なし'}
-                            </p>
-                            
-                            <div class="mt-3">
-                                <small class="text-muted">
+                            <div class="small text-muted text-truncate">
+                                ${project.description ? escapeHtml(project.description) : '説明なし'}
+                            </div>
+                            <div class="small text-muted d-flex flex-wrap gap-3 mt-1">
+                                <span>
                                     ${project.bigquery_project_id ? 
                                         `<i class="bi bi-database"></i> ${escapeHtml(project.bigquery_project_id)}` : 
                                         '<i class="bi bi-exclamation-circle text-warning"></i> BigQuery未設定'
                                     }
-                                </small>
-                            </div>
-                            
-                            <div class="mt-2">
-                                <small class="text-muted">
-                                    作成日: ${formatDate(project.created_at)}
-                                </small>
+                                </span>
+                                <span><i class="bi bi-calendar3"></i> ${formatDate(project.created_at)}</span>
                             </div>
                         </div>
-                        <div class="card-footer bg-transparent">
-                            <a href="/settings?project=${project.id}" class="btn btn-sm btn-outline-primary">
-                                <i class="bi bi-gear"></i> 設定
-                            </a>
+                        <a href="/settings?project=${project.id}" class="btn btn-sm btn-outline-primary flex-shrink-0" onclick="event.stopPropagation();">
+                            <i class="bi bi-gear"></i> 設定
+                        </a>
+                        <div class="dropdown flex-shrink-0" onclick="event.stopPropagation();">
+                            <button class="btn btn-sm btn-link text-secondary" type="button" data-bs-toggle="dropdown">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                ${!project.is_active ? `
+                                    <li><a class="dropdown-item" href="#" onclick="activateProject(${project.id}); return false;">
+                                        <i class="bi bi-check-circle"></i> アクティブ化
+                                    </a></li>
+                                ` : ''}
+                                <li><a class="dropdown-item" href="#" onclick="editProject(${project.id}); return false;">
+                                    <i class="bi bi-pencil"></i> 編集
+                                </a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item text-danger" href="#" onclick="deleteProject(${project.id}, '${escapeHtml(project.name)}'); return false;">
+                                    <i class="bi bi-trash"></i> 削除
+                                </a></li>
+                            </ul>
                         </div>
+                        <i class="bi bi-chevron-right text-muted flex-shrink-0"></i>
                     </div>
                 </div>
             `).join('')}
@@ -229,6 +220,24 @@ async function confirmDelete() {
     } catch (error) {
         console.error('Error deleting project:', error);
         showError('プロジェクトの削除中にエラーが発生しました');
+    }
+}
+
+async function openProject(projectId) {
+    const project = projects.find(p => p.id === projectId);
+    try {
+        if (!project || !project.is_active) {
+            const response = await fetch(`/api/projects/${projectId}/activate`, { method: 'POST' });
+            const data = await response.json();
+            if (!data.success) {
+                showError(data.error || 'プロジェクトの切り替えに失敗しました');
+                return;
+            }
+        }
+        window.location.href = '/agent-chat';
+    } catch (error) {
+        console.error('Error opening project:', error);
+        showError('プロジェクトを開く際にエラーが発生しました');
     }
 }
 

@@ -30,6 +30,23 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // 「指摘を反映して再分析」ボタンのクリックハンドラ（イベント委譲）
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        chatMessages.addEventListener('click', function(e) {
+            const btn = e.target.closest('.review-reanalyze-btn');
+            if (!btn) return;
+            if (isProcessing) return;
+            const question = btn.dataset.question;
+            if (!question) return;
+            const input = document.getElementById('questionInput');
+            if (input) {
+                input.value = question;
+                chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+        });
+    }
+    
     // テキストエリアのEnterキーハンドリング
     const questionInput = document.getElementById('questionInput');
     if (questionInput) {
@@ -47,7 +64,94 @@ document.addEventListener('DOMContentLoaded', function() {
             this.style.height = Math.min(this.scrollHeight, 200) + 'px';
         });
     }
+    
+    // 入力履歴パネル
+    setupInputHistory();
 });
+
+function setupInputHistory() {
+    const historyBtn = document.getElementById('historyBtn');
+    const panel = document.getElementById('inputHistoryPanel');
+    const list = document.getElementById('inputHistoryList');
+    const closeBtn = document.getElementById('inputHistoryClose');
+    if (!historyBtn || !panel || !list) return;
+    
+    function hidePanel() {
+        panel.classList.add('d-none');
+    }
+    
+    async function showPanel() {
+        panel.classList.remove('d-none');
+        list.innerHTML = '<div class="text-muted small p-3"><span class="spinner-border spinner-border-sm me-2"></span>読み込み中...</div>';
+        try {
+            const res = await fetch('/api/input-history');
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error || '取得に失敗しました');
+            if (!data.history.length) {
+                list.innerHTML = '<div class="text-muted small p-3">入力履歴はまだありません</div>';
+                return;
+            }
+            list.innerHTML = '';
+            data.history.forEach(item => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'input-history-item';
+                
+                const text = document.createElement('div');
+                text.className = 'input-history-text';
+                text.textContent = item.message;
+                btn.appendChild(text);
+                
+                if (item.created_at) {
+                    const time = document.createElement('div');
+                    time.className = 'input-history-time';
+                    const d = new Date(item.created_at);
+                    time.textContent = d.toLocaleString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    btn.appendChild(time);
+                }
+                
+                btn.addEventListener('click', () => {
+                    const input = document.getElementById('questionInput');
+                    if (input) {
+                        input.value = item.message;
+                        input.style.height = 'auto';
+                        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+                        input.focus();
+                    }
+                    hidePanel();
+                });
+                list.appendChild(btn);
+            });
+        } catch (err) {
+            list.innerHTML = '';
+            const errDiv = document.createElement('div');
+            errDiv.className = 'text-danger small p-3';
+            errDiv.textContent = 'エラー: ' + err.message;
+            list.appendChild(errDiv);
+        }
+    }
+    
+    historyBtn.addEventListener('click', () => {
+        if (panel.classList.contains('d-none')) {
+            showPanel();
+        } else {
+            hidePanel();
+        }
+    });
+    if (closeBtn) closeBtn.addEventListener('click', hidePanel);
+    
+    // パネル外クリックで閉じる
+    document.addEventListener('click', (e) => {
+        if (panel.classList.contains('d-none')) return;
+        if (panel.contains(e.target) || historyBtn.contains(e.target)) return;
+        hidePanel();
+    });
+    
+    // Escキーで閉じる
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') hidePanel();
+    });
+}
 
 async function checkConfiguration() {
     const statusDiv = document.getElementById('configStatus');
@@ -91,6 +195,18 @@ async function checkConfiguration() {
         const aiProviderSelect = document.getElementById('aiProviderSelect');
         if (aiProviderSelect && config.ai_provider) {
             aiProviderSelect.value = config.ai_provider;
+        }
+        
+        // Show the configured model names in the provider dropdown
+        if (aiProviderSelect) {
+            const geminiOption = aiProviderSelect.querySelector('option[value="gemini"]');
+            if (geminiOption && config.gemini_model) {
+                geminiOption.textContent = `Google Gemini (${config.gemini_model})`;
+            }
+            const openaiOption = aiProviderSelect.querySelector('option[value="openai"]');
+            if (openaiOption && config.openai_model) {
+                openaiOption.textContent = `OpenAI (${config.openai_model})`;
+            }
         }
         
         // Check if at least one AI API key is configured (OpenAI OR Gemini)
@@ -245,7 +361,7 @@ async function handleSubmit(event) {
             if (statusData.steps && statusData.steps.length > lastStepCount) {
                 const newSteps = statusData.steps.slice(lastStepCount);
                 for (const step of newSteps) {
-                    updateStatus(statusDiv, '', step, 'info');
+                    updateStatus(statusDiv, '', step, isReviewStep(step) ? 'review' : 'info');
                 }
                 lastStepCount = statusData.steps.length;
                 scrollToBottom();
@@ -385,6 +501,52 @@ async function cancelCurrentTask() {
     return false;
 }
 
+function isReviewStep(step) {
+    if (typeof step !== 'string') return false;
+    return step.includes('レビュー') || step.includes('再分析') || step.includes('【数値齟齬】') || step.startsWith('🔎') || step.startsWith('　🔸');
+}
+
+// Elapsed-time counter for long-running steps (e.g. review reanalysis)
+let activeElapsedTimer = null;
+
+function isReanalysisStep(step) {
+    return typeof step === 'string' && step.includes('再分析を実行しています');
+}
+
+function formatElapsed(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m > 0 ? `${m}分${s}秒` : `${s}秒`;
+}
+
+function stopElapsedTimer() {
+    if (activeElapsedTimer) {
+        clearInterval(activeElapsedTimer.intervalId);
+        // Freeze the final duration on the element
+        const total = Math.floor((Date.now() - activeElapsedTimer.start) / 1000);
+        if (activeElapsedTimer.el) {
+            activeElapsedTimer.el.textContent = `（経過 ${formatElapsed(total)}）`;
+            activeElapsedTimer.el.classList.add('elapsed-done');
+        }
+        activeElapsedTimer = null;
+    }
+}
+
+function startElapsedTimer(logEntry) {
+    stopElapsedTimer();
+    const el = document.createElement('span');
+    el.className = 'elapsed-timer';
+    el.textContent = '（経過 0秒）';
+    const textSpan = logEntry.querySelector('.status-text');
+    (textSpan || logEntry).appendChild(el);
+    const start = Date.now();
+    const intervalId = setInterval(() => {
+        const total = Math.floor((Date.now() - start) / 1000);
+        el.textContent = `（経過 ${formatElapsed(total)}）`;
+    }, 1000);
+    activeElapsedTimer = { intervalId, el, start };
+}
+
 function updateStatus(statusDiv, icon, message, type = '') {
     console.log('updateStatus called:', {icon, message, type, statusDiv});
     const container = statusDiv.querySelector('.status-logs-container');
@@ -398,6 +560,9 @@ function updateStatus(statusDiv, icon, message, type = '') {
             }
         }
         
+        // 新しいステップが来たら進行中の経過時間カウンターを確定させる
+        stopElapsedTimer();
+        
         // 新しいステータスログを追加
         const logEntry = document.createElement('div');
         logEntry.className = `status-indicator ${type}`;
@@ -406,6 +571,11 @@ function updateStatus(statusDiv, icon, message, type = '') {
             <span class="status-text">${message}</span>
         `;
         container.appendChild(logEntry);
+        
+        // 再分析ステップには経過時間カウンターを表示
+        if (isReanalysisStep(message)) {
+            startElapsedTimer(logEntry);
+        }
         console.log('Status log added successfully');
     } else {
         console.error('Status logs container not found!');
@@ -421,10 +591,12 @@ function createAssistantMessageDiv(timestamp = null) {
     
     div.innerHTML = `
         <div class="message-wrapper-assistant">
-            ${timestampHtml}
-            <div class="message-assistant">
-                <h5><i class="bi bi-robot"></i> AIアシスタント</h5>
-                <div class="assistant-content"></div>
+            <div class="message-avatar avatar-ai"><i class="bi bi-robot"></i></div>
+            <div class="message-body">
+                ${timestampHtml}
+                <div class="message-assistant">
+                    <div class="assistant-content"></div>
+                </div>
             </div>
         </div>
     `;
@@ -478,6 +650,62 @@ function updateCombinedMessage(messageDiv, reasoningText, normalText) {
     }
 }
 
+function buildReanalysisQuestion(issues, reason) {
+    // Builds a follow-up question that asks the AI to redo the analysis
+    // taking the review issues into account.
+    let text = '前回の回答に対するレビューで以下の指摘がありました。指摘内容を反映して再分析してください。\n';
+    if (issues.length > 0) {
+        issues.forEach((issue, i) => {
+            text += `\n${i + 1}. ${String(issue)}`;
+        });
+    } else if (reason) {
+        text += `\n${reason}`;
+    }
+    return text;
+}
+
+function createReviewBadge(review) {
+    // Renders the AI review verdict as a badge with expandable details.
+    // Returns '' when review is disabled/absent or the review call failed.
+    if (!review || review.review_failed) return '';
+
+    const isPass = review.verdict === 'pass';
+    const issues = Array.isArray(review.issues) ? review.issues : [];
+    const reason = review.reason ? String(review.reason) : '';
+
+    const badgeClass = isPass ? 'review-badge-pass' : 'review-badge-warning';
+    const badgeIcon = isPass ? 'bi-patch-check-fill' : 'bi-exclamation-triangle-fill';
+    const badgeLabel = isPass ? 'レビュー済み ✅ 合格' : `レビュー指摘あり（${issues.length}件）`;
+
+    const hasDetails = reason || issues.length > 0;
+
+    let html = `<div class="review-result mb-3">`;
+    if (hasDetails) {
+        html += `<details class="review-details">`;
+        html += `<summary class="review-badge ${badgeClass}"><i class="bi ${badgeIcon}"></i> ${escapeHtml(badgeLabel)} <span class="review-toggle-hint">詳細</span></summary>`;
+        html += `<div class="review-detail-body">`;
+        if (reason) {
+            html += `<div class="review-reason"><strong>判定理由:</strong> ${escapeHtml(reason)}</div>`;
+        }
+        if (issues.length > 0) {
+            html += `<div class="review-issues"><strong>指摘事項:</strong><ul class="mb-0">`;
+            issues.forEach(issue => {
+                html += `<li>${escapeHtml(String(issue))}</li>`;
+            });
+            html += `</ul></div>`;
+        }
+        if (!isPass) {
+            const followUpText = buildReanalysisQuestion(issues, reason);
+            html += `<button type="button" class="btn btn-sm btn-outline-primary review-reanalyze-btn mt-2" data-question="${escapeHtml(followUpText)}"><i class="bi bi-arrow-repeat"></i> 指摘を反映して再分析</button>`;
+        }
+        html += `</div></details>`;
+    } else {
+        html += `<span class="review-badge ${badgeClass}"><i class="bi ${badgeIcon}"></i> ${escapeHtml(badgeLabel)}</span>`;
+    }
+    html += `</div>`;
+    return html;
+}
+
 function displayFinalResult(messageDiv, result) {
     const contentDiv = messageDiv.querySelector('.assistant-content');
     if (!contentDiv) return;
@@ -490,6 +718,9 @@ function displayFinalResult(messageDiv, result) {
     
     let html = '';
     
+    // レビュー結果バッジを追加（レビュー有効時のみ）
+    html += createReviewBadge(result.review);
+    
     // AIの回答テキストを追加
     if (result.answer) {
         html += `<div class="answer-text mb-3">${formatAnswer(result.answer)}</div>`;
@@ -500,7 +731,8 @@ function displayFinalResult(messageDiv, result) {
         html += `<div class="steps-container mb-2">`;
         html += `<strong><i class="bi bi-gear-fill"></i> 実行ステップ:</strong><br>`;
         result.steps.forEach(step => {
-            html += `<div class="step">${escapeHtml(step)}</div>`;
+            const stepClass = isReviewStep(step) ? 'step review-step' : 'step';
+            html += `<div class="${stepClass}">${escapeHtml(step)}</div>`;
         });
         html += `</div>`;
     }
@@ -573,8 +805,11 @@ function addUserMessage(text) {
     
     messageDiv.innerHTML = `
         <div class="message-wrapper-user">
-            <div class="message-timestamp-outside">${jstTime}</div>
-            <div class="message-user">${escapeHtml(text)}</div>
+            <div class="message-body">
+                <div class="message-timestamp-outside">${jstTime}</div>
+                <div class="message-user">${escapeHtml(text)}</div>
+            </div>
+            <div class="message-avatar avatar-user"><i class="bi bi-person-fill"></i></div>
         </div>
     `;
     messagesDiv.appendChild(messageDiv);
@@ -591,8 +826,11 @@ function addUserMessageWithTimestamp(text, timestamp) {
     
     messageDiv.innerHTML = `
         <div class="message-wrapper-user">
-            <div class="message-timestamp-outside">${jstTime}</div>
-            <div class="message-user">${escapeHtml(text)}</div>
+            <div class="message-body">
+                <div class="message-timestamp-outside">${jstTime}</div>
+                <div class="message-user">${escapeHtml(text)}</div>
+            </div>
+            <div class="message-avatar avatar-user"><i class="bi bi-person-fill"></i></div>
         </div>
     `;
     messagesDiv.appendChild(messageDiv);
@@ -1013,6 +1251,11 @@ async function loadCurrentSessionMessages() {
                                 const result = typeof msg.query_result === 'string' 
                                     ? JSON.parse(msg.query_result) 
                                     : msg.query_result;
+                                
+                                // Add review badge (only when review was enabled)
+                                if (result && result.review) {
+                                    html += createReviewBadge(result.review);
+                                }
                                 
                                 // Add data table
                                 if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
