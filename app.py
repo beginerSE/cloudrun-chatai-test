@@ -6534,8 +6534,23 @@ def list_datasets():
         }), 500
 
 
-if __name__ == '__main__':
-    # Local development server
-    # In production (Cloud Run), gunicorn is used instead
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+# if __name__ == '__main__':
+#     # Local development server
+#     # In production (Cloud Run), gunicorn is used instead
+#     port = int(os.getenv('PORT', 5000))
+#     app.run(host='0.0.0.0', port=port, debug=True)
+
+
+@app.route("/test")
+def root():
+    return jsonify(
+        {
+            "message": "Cloud Run + Cloud SQL minimal CRUD API",
+            "endpoints": ["/items (GET, POST)", "/items/<id> (GET, PUT, DELETE)"],
+        }
+    )
+
+# Cloud Run で直接実行されることはあまり無いが、ローカル動作用
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
